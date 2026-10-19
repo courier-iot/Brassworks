@@ -15,8 +15,19 @@ jobs:
       - uses: gradle/actions/setup-gradle@v4
         with:
           gradle-version: "8.9"
-      - run: gradle assembleDebug --no-daemon
+      - name: Build
+        run: |
+          SETTINGS=$(find . -name settings.gradle.kts -not -path "./.git/*" | head -n 1)
+          if [ -z "$SETTINGS" ]; then
+            echo "No settings.gradle.kts found. Files in the repo:"
+            find . -not -path "./.git/*" | head -100
+            exit 1
+          fi
+          cd "$(dirname "$SETTINGS")"
+          pwd
+          ls
+          gradle assembleDebug --no-daemon
       - uses: actions/upload-artifact@v4
         with:
           name: brassworks-apk
-          path: app/build/outputs/apk/debug/*.apk
+          path: "**/build/outputs/apk/debug/*.apk"
