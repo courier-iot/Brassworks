@@ -1,0 +1,7 @@
+<resources>
+    <style name="Theme.Brassworks" parent="android:Theme.Material.NoActionBar">
+        <item name="android:statusBarColor">#1B1210</item>
+        <item name="android:navigationBarColor">#1B1210</item>
+        <item name="android:windowBackground">#1B1210</item>
+    </style>
+</resources>
