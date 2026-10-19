@@ -324,11 +324,10 @@ fun CogButton(
 /** A centred, wrapping row of cogs. */
 @OptIn(ExperimentalLayoutApi::class)
 @Composable
-fun CogRow(modifier: Modifier = Modifier, content: @Composable FlowRowScope.() -> Unit) {
+fun CogRow(modifier: Modifier = Modifier, content: @Composable () -> Unit) {
     FlowRow(
         modifier.fillMaxWidth(),
         horizontalArrangement = Arrangement.spacedBy(4.dp, Alignment.CenterHorizontally),
         verticalArrangement = Arrangement.spacedBy(4.dp),
-        content = content,
-    )
+    ) { content() }
 }

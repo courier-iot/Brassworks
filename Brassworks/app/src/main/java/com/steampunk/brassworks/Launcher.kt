@@ -753,10 +753,12 @@ private fun ClockContent(now: LocalDateTime, is24: Boolean) = BoxWithConstraints
     val (time, ampm) = clockText(now, is24)
     val hour = now.hour % 12 + now.minute / 60f
     val minute = now.minute + now.second / 60f
-    if (maxWidth > maxHeight * 1.3f) {
-        val dial = minOf(maxHeight, maxWidth * 0.5f)
-        val textW = maxWidth - dial - 12.dp
-        val fs = minOf(textW.value * 0.27f, maxHeight.value * 0.45f).coerceIn(18f, 48f)
+    val mw = maxWidth
+    val mh = maxHeight
+    if (mw > mh * 1.3f) {
+        val dial = minOf(mh, mw * 0.5f)
+        val textW = mw - dial - 12.dp
+        val fs = minOf(textW.value * 0.27f, mh.value * 0.45f).coerceIn(18f, 48f)
         Row(Modifier.fillMaxSize(), verticalAlignment = Alignment.CenterVertically) {
             AnalogClock(hour, minute, Modifier.size(dial))
             Spacer(Modifier.width(12.dp))
@@ -771,9 +773,9 @@ private fun ClockContent(now: LocalDateTime, is24: Boolean) = BoxWithConstraints
         }
     } else {
         Column(Modifier.fillMaxSize(), horizontalAlignment = Alignment.CenterHorizontally, verticalArrangement = Arrangement.Center) {
-            AnalogClock(hour, minute, Modifier.size(minOf(maxWidth, maxHeight * 0.68f)))
+            AnalogClock(hour, minute, Modifier.size(minOf(mw, mh * 0.68f)))
             Spacer(Modifier.height(4.dp))
-            TimeLine(time, ampm, (maxHeight.value * 0.14f).coerceIn(14f, 28f))
+            TimeLine(time, ampm, (mh.value * 0.14f).coerceIn(14f, 28f))
         }
     }
 }
@@ -794,9 +796,11 @@ private fun DigitalContent(now: LocalDateTime, is24: Boolean) = BoxWithConstrain
 
 @Composable
 private fun GaugeContent(value: Float, dangerLow: Boolean, title: String, caption: String) = BoxWithConstraints(Modifier.fillMaxSize()) {
-    if (maxWidth > maxHeight * 1.35f) {
+    val mw = maxWidth
+    val mh = maxHeight
+    if (mw > mh * 1.35f) {
         Row(Modifier.fillMaxSize(), verticalAlignment = Alignment.CenterVertically) {
-            PressureGauge(value, Modifier.size(minOf(maxHeight, maxWidth * 0.45f)), dangerLow)
+            PressureGauge(value, Modifier.size(minOf(mh, mw * 0.45f)), dangerLow)
             Spacer(Modifier.width(12.dp))
             Column(Modifier.weight(1f)) {
                 Text(title, style = MaterialTheme.typography.titleMedium, color = Steam.BrassLight, maxLines = 1)
@@ -805,7 +809,7 @@ private fun GaugeContent(value: Float, dangerLow: Boolean, title: String, captio
         }
     } else {
         Column(Modifier.fillMaxSize(), horizontalAlignment = Alignment.CenterHorizontally, verticalArrangement = Arrangement.Center) {
-            PressureGauge(value, Modifier.size(minOf(maxWidth, maxHeight * 0.62f)), dangerLow)
+            PressureGauge(value, Modifier.size(minOf(mw, mh * 0.62f)), dangerLow)
             Spacer(Modifier.height(2.dp))
             Text(title, fontSize = 14.sp, fontFamily = FontFamily.Serif, fontWeight = FontWeight.Bold, color = Steam.BrassLight, maxLines = 1)
             Text(caption, fontSize = 12.sp, fontFamily = FontFamily.Serif, color = Steam.Steam, maxLines = 1)
