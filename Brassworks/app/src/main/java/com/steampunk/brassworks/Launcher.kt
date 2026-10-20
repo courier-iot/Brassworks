@@ -403,7 +403,7 @@ class WidgetBoard(private val prefs: SharedPreferences) {
         return out
     }
 
-    fun setGridMode(on: Boolean) {
+    fun useGrid(on: Boolean) {
         gridMode = on
         prefs.edit().putBoolean("grid", on).apply()
         if (on) {
@@ -903,7 +903,7 @@ fun LauncherRoot(tick: Int, homeSignal: Int) {
                             }
                             Switch(
                                 checked = board.gridMode,
-                                onCheckedChange = { board.setGridMode(it) },
+                                onCheckedChange = { board.useGrid(it) },
                                 colors = SwitchDefaults.colors(
                                     checkedThumbColor = Steam.BrassLight, checkedTrackColor = Steam.BrassDark,
                                     uncheckedThumbColor = Steam.Steam, uncheckedTrackColor = Steam.Soot,
