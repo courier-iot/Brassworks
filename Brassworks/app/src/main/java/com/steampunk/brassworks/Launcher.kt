@@ -1,14 +1,19 @@
 package com.steampunk.brassworks
 
+import android.content.ClipData
+import android.content.ClipboardManager
 import android.content.ComponentName
 import android.content.Context
 import android.content.Intent
 import android.content.IntentFilter
 import android.content.SharedPreferences
+import android.content.pm.LauncherApps
 import android.content.pm.PackageManager
+import android.content.pm.ShortcutInfo
 import android.net.Uri
 import android.os.BatteryManager
 import android.os.Environment
+import android.os.Process
 import android.os.StatFs
 import android.provider.MediaStore
 import android.provider.Settings
@@ -73,6 +78,8 @@ import kotlinx.coroutines.delay
 import kotlinx.coroutines.withContext
 import org.json.JSONArray
 import org.json.JSONObject
+import java.math.BigDecimal
+import java.math.MathContext
 import java.time.LocalDateTime
 import java.time.YearMonth
 import java.time.format.DateTimeFormatter
@@ -165,6 +172,168 @@ private fun storageUse(): Pair<Float, Float> = try {
     val free = s.availableBytes.toFloat()
     (1f - free / total) to (free / 1e9f)
 } catch (e: Exception) { 0f to 0f }
+
+// ───────────────────────── Power-user helpers ─────────────────────────
+
+/** Fuzzy match score (higher is better, null = no match). Handles prefixes, word starts, initials and typos in order. */
+private fun fuzzyScore(label: String, query: String): Int? {
+    val l = label.lowercase()
+    val q = query.trim().lowercase()
+    if (q.isEmpty()) return 0
+    if (l == q) return 1000
+    if (l.startsWith(q)) return 900 - l.length
+    val words = l.split(" ", "-", "_", ".").filter { it.isNotEmpty() }
+    if (words.any { it.startsWith(q) }) return 800 - l.length
+    val at = l.indexOf(q)
+    if (at >= 0) return 700 - at
+    if (words.map { it[0] }.joinToString("").startsWith(q)) return 600 // "gm" finds Google Maps
+    if (q.length >= 3) {
+        var qi = 0
+        var gaps = 0
+        var last = -1
+        for ((i, ch) in l.withIndex()) {
+            if (qi < q.length && ch == q[qi]) {
+                if (last >= 0 && i - last > 1) gaps++
+                last = i
+                qi++
+            }
+        }
+        if (qi == q.length) return 400 - gaps * 10 - l.length // "clndr" finds Calendar
+    }
+    return null
+}
+
+/** A tiny, safe arithmetic parser: + - * / ^ % and brackets. */
+private class CalcParser(private val s: String) {
+    private var i = 0
+
+    fun parse(): Double? = try {
+        val v = expr()
+        skip()
+        if (i == s.length && v.isFinite()) v else null
+    } catch (e: Exception) { null }
+
+    private fun skip() { while (i < s.length && s[i] == ' ') i++ }
+    private fun peek(): Char = if (i < s.length) s[i] else '\u0000'
+
+    private fun expr(): Double {
+        var v = term()
+        var more = true
+        while (more) {
+            skip()
+            when (peek()) {
+                '+' -> { i++; v += term() }
+                '-' -> { i++; v -= term() }
+                else -> more = false
+            }
+        }
+        return v
+    }
+
+    private fun term(): Double {
+        var v = unary()
+        var more = true
+        while (more) {
+            skip()
+            when (peek()) {
+                '*' -> { i++; v *= unary() }
+                '/' -> { i++; v /= unary() }
+                else -> more = false
+            }
+        }
+        return v
+    }
+
+    private fun unary(): Double {
+        skip()
+        return when (peek()) {
+            '-' -> { i++; -unary() }
+            '+' -> { i++; unary() }
+            else -> power()
+        }
+    }
+
+    private fun power(): Double {
+        val b = postfix()
+        skip()
+        if (peek() == '^') { i++; return Math.pow(b, unary()) }
+        return b
+    }
+
+    private fun postfix(): Double {
+        var v = atom()
+        skip()
+        while (peek() == '%') { i++; v /= 100.0; skip() }
+        return v
+    }
+
+    private fun atom(): Double {
+        skip()
+        if (peek() == '(') {
+            i++
+            val v = expr()
+            skip()
+            if (peek() != ')') throw IllegalArgumentException("missing bracket")
+            i++
+            return v
+        }
+        val st = i
+        while (i < s.length && (s[i].isDigit() || s[i] == '.')) i++
+        if (st == i) throw IllegalArgumentException("number expected")
+        return s.substring(st, i).toDouble()
+    }
+}
+
+private fun formatNumber(v: Double): String {
+    if (v == Math.rint(v) && Math.abs(v) < 1e15) return v.toLong().toString()
+    return BigDecimal(v).round(MathContext(10)).stripTrailingZeros().toPlainString()
+}
+
+/** The answer if the search text is a sum such as 18*4+6, otherwise null. */
+private fun calcResult(query: String): String? {
+    val q = query.trim()
+        .replace('×', '*').replace('÷', '/').replace(',', '.')
+        .replace(Regex("(?<=[0-9)])\\s*[xX]\\s*(?=[0-9(])"), "*")
+    if (q.length < 3 || q.any { it !in "0123456789+-*/^%(). " }) return null
+    val hasOp = q.indices.any { it > 0 && q[it] in "+-*/^%" } || q.contains('(')
+    if (!hasOp || q.none { it.isDigit() }) return null
+    val v = CalcParser(q).parse() ?: return null
+    return formatNumber(v)
+}
+
+private fun loadHidden(prefs: SharedPreferences): Set<String> =
+    (prefs.getString("hidden", "") ?: "").split(",").filter { it.isNotBlank() }.toSet()
+
+private fun canUseShortcuts(ctx: Context): Boolean = try {
+    (ctx.getSystemService(Context.LAUNCHER_APPS_SERVICE) as LauncherApps).hasShortcutHostPermission()
+} catch (e: Exception) { false }
+
+/** App shortcuts (e.g. "New message"). Android only gives these to the default home app. */
+private fun loadShortcuts(ctx: Context, pkg: String): List<ShortcutInfo> = try {
+    val la = ctx.getSystemService(Context.LAUNCHER_APPS_SERVICE) as LauncherApps
+    if (!la.hasShortcutHostPermission()) {
+        emptyList()
+    } else {
+        val q = LauncherApps.ShortcutQuery()
+            .setPackage(pkg)
+            .setQueryFlags(
+                LauncherApps.ShortcutQuery.FLAG_MATCH_DYNAMIC or
+                    LauncherApps.ShortcutQuery.FLAG_MATCH_MANIFEST or
+                    LauncherApps.ShortcutQuery.FLAG_MATCH_PINNED
+            )
+        (la.getShortcuts(q, Process.myUserHandle()) ?: emptyList())
+            .filter { it.isEnabled && it.shortLabel != null }
+            .take(4)
+    }
+} catch (e: Exception) { emptyList() }
+
+private fun startShortcut(ctx: Context, sc: ShortcutInfo) {
+    try {
+        (ctx.getSystemService(Context.LAUNCHER_APPS_SERVICE) as LauncherApps).startShortcut(sc, null, null)
+    } catch (e: Exception) {
+        Toast.makeText(ctx, "Could not open that shortcut", Toast.LENGTH_SHORT).show()
+    }
+}
 
 // ───────────────────────── Widgets: model ─────────────────────────
 
@@ -612,11 +781,13 @@ fun LauncherRoot(tick: Int, homeSignal: Int) {
     var folderPick by remember { mutableStateOf<AppInfo?>(null) }
     var presetDialog by remember { mutableStateOf(false) }
     var saveDialog by remember { mutableStateOf(false) }
+    var hiddenDialog by remember { mutableStateOf(false) }
+    var hidden by remember { mutableStateOf(loadHidden(prefs)) }
 
     // Pressing the Home button closes everything and returns to the main screen.
     LaunchedEffect(homeSignal) {
         drawer = false; menuApp = null; settings = false; fabMenu = false; picker = false; editing = false
-        openFolder = null; menuFolder = null; folderPick = null; presetDialog = false; saveDialog = false
+        openFolder = null; menuFolder = null; folderPick = null; presetDialog = false; saveDialog = false; hiddenDialog = false
     }
     BackHandler(enabled = drawer || menuApp != null || settings || fabMenu || picker || editing || folderPick != null || openFolder != null) {
         when {
@@ -635,6 +806,13 @@ fun LauncherRoot(tick: Int, homeSignal: Int) {
         pinned = list
         prefs.edit().putString("pinned", list.joinToString(",")).apply()
     }
+
+    fun setHiddenSet(set: Set<String>) {
+        hidden = set
+        prefs.edit().putString("hidden", set.joinToString(",")).apply()
+    }
+
+    val visibleApps = remember(apps, hidden) { apps.filter { it.packageName !in hidden } }
 
     fun applyPreset(p: Preset) {
         val dropped = board.applyPreset(p)
@@ -656,7 +834,7 @@ fun LauncherRoot(tick: Int, homeSignal: Int) {
         Surface(Modifier.fillMaxSize(), color = Steam.Soot, contentColor = Steam.Parchment) {
             Box(Modifier.fillMaxSize()) {
                 HomeScreen(
-                    board = board, apps = apps, pinned = pinned, counts = counts, tick = tick,
+                    board = board, apps = apps, pinned = pinned, counts = counts, hidden = hidden, tick = tick,
                     prefs = prefs, editing = editing,
                     onLaunch = launch,
                     onLongPress = { menuApp = it; menuFolder = null },
@@ -673,7 +851,7 @@ fun LauncherRoot(tick: Int, homeSignal: Int) {
                     exit = slideOutVertically(tween(250)) { it } + fadeOut(tween(250)),
                 ) {
                     DrawerScreen(
-                        apps = apps,
+                        apps = visibleApps,
                         onLaunch = launch,
                         onLongPress = { menuApp = it; menuFolder = null },
                         onClose = { drawer = false },
@@ -685,6 +863,9 @@ fun LauncherRoot(tick: Int, homeSignal: Int) {
         // Long-press menu for an app
         menuApp?.let { app ->
             val onShelf = app.packageName in pinned
+            val isHidden = app.packageName in hidden
+            val shortcuts = remember(app.packageName) { loadShortcuts(ctx, app.packageName) }
+            val canShortcuts = remember { canUseShortcuts(ctx) }
             Dialog(onDismissRequest = { menuApp = null }) {
                 RivetedPanel(Modifier.fillMaxWidth()) {
                     Column(
@@ -695,15 +876,31 @@ fun LauncherRoot(tick: Int, homeSignal: Int) {
                         Text(app.label, style = MaterialTheme.typography.titleMedium, color = Steam.Parchment)
                         Text(
                             (if (onShelf) "Unpin takes it off your app shelf." else "Pin puts it on your app shelf.") +
-                                (if (menuFolder != null) " Eject takes it out of this folder." else ""),
+                                (if (menuFolder != null) " Eject takes it out of this folder." else "") +
+                                " Hide keeps it out of the archive.",
                             style = MaterialTheme.typography.labelLarge, color = Steam.Steam, textAlign = TextAlign.Center,
                         )
+                        if (shortcuts.isNotEmpty()) {
+                            Text("Shortcuts", style = MaterialTheme.typography.labelLarge, color = Steam.BrassLight)
+                            shortcuts.forEach { sc ->
+                                ChoiceRow(sc.shortLabel.toString(), "") { startShortcut(ctx, sc); menuApp = null }
+                            }
+                        } else if (!canShortcuts) {
+                            Text(
+                                "Make Brassworks your home app to see this app's shortcuts here.",
+                                style = MaterialTheme.typography.labelLarge, color = Steam.Steam.copy(alpha = 0.7f), textAlign = TextAlign.Center,
+                            )
+                        }
                         CogRow {
                             CogButton(if (onShelf) "Unpin" else "Pin") {
                                 setPinned(if (onShelf) pinned - app.packageName else pinned + app.packageName)
                                 menuApp = null
                             }
                             CogButton("Folder") { folderPick = app; menuApp = null }
+                            CogButton(if (isHidden) "Show" else "Hide") {
+                                setHiddenSet(if (isHidden) hidden - app.packageName else hidden + app.packageName)
+                                menuApp = null
+                            }
                             menuFolder?.let { fid ->
                                 CogButton("Eject") {
                                     board.removeFromFolder(fid, app.packageName)
@@ -793,6 +990,38 @@ fun LauncherRoot(tick: Int, homeSignal: Int) {
                 onLongPress = { menuApp = it; menuFolder = fid },
                 onClose = { openFolder = null },
             )
+        }
+
+        // Hidden apps
+        if (hiddenDialog) {
+            val hiddenApps = apps.filter { it.packageName in hidden }
+            Dialog(onDismissRequest = { hiddenDialog = false }) {
+                RivetedPanel(Modifier.fillMaxWidth()) {
+                    Column(Modifier.fillMaxWidth(), verticalArrangement = Arrangement.spacedBy(10.dp)) {
+                        Text("HIDDEN APPS", style = MaterialTheme.typography.titleLarge, color = Steam.BrassLight)
+                        Text(
+                            "Hidden apps stay out of the archive, search and picks. Tap one to open it. This only tidies the view and does not lock anything.",
+                            style = MaterialTheme.typography.labelLarge, color = Steam.Steam,
+                        )
+                        if (hiddenApps.isEmpty()) {
+                            Text(
+                                "Nothing is hidden. Long-press an app in the archive and choose Hide.",
+                                style = MaterialTheme.typography.bodyMedium, color = Steam.Parchment,
+                            )
+                        } else {
+                            Column(
+                                Modifier.heightIn(max = 320.dp).verticalScroll(rememberScrollState()),
+                                verticalArrangement = Arrangement.spacedBy(8.dp),
+                            ) {
+                                hiddenApps.forEach { a ->
+                                    HiddenRow(a, onOpen = { launch(a); hiddenDialog = false }, onShow = { setHiddenSet(hidden - a.packageName) })
+                                }
+                            }
+                        }
+                        CogRow { CogButton("Close") { hiddenDialog = false } }
+                    }
+                }
+            }
         }
 
         // Presets list
@@ -910,16 +1139,38 @@ fun LauncherRoot(tick: Int, homeSignal: Int) {
                                 ),
                             )
                         }
-                        Text("Home sets your default home app. Device opens Android settings.", style = MaterialTheme.typography.labelLarge, color = Steam.Steam)
+                        Text("Home sets your default home app. Device opens Android settings. Hidden lists apps you hid.", style = MaterialTheme.typography.labelLarge, color = Steam.Steam)
                         CogRow {
                             CogButton("Home") { open(ctx, Intent(Settings.ACTION_HOME_SETTINGS)) }
                             CogButton("Device") { open(ctx, Intent(Settings.ACTION_SETTINGS)) }
+                            CogButton("Hidden") { settings = false; hiddenDialog = true }
                             CogButton("Close") { settings = false }
                         }
                     }
                 }
             }
         }
+    }
+}
+
+@Composable
+private fun HiddenRow(app: AppInfo, onOpen: () -> Unit, onShow: () -> Unit) {
+    val shape = RoundedCornerShape(8.dp)
+    Row(
+        Modifier.fillMaxWidth().clip(shape)
+            .background(Steam.Soot.copy(alpha = 0.6f))
+            .border(1.dp, Steam.BrassDark, shape),
+        verticalAlignment = Alignment.CenterVertically,
+    ) {
+        Row(Modifier.weight(1f).clickable(onClick = onOpen).padding(10.dp), verticalAlignment = Alignment.CenterVertically) {
+            Porthole(app.icon, size = 40.dp)
+            Spacer(Modifier.width(10.dp))
+            Text(app.label, style = MaterialTheme.typography.titleMedium, color = Steam.Parchment, maxLines = 1, overflow = TextOverflow.Ellipsis)
+        }
+        Text(
+            "Show", Modifier.clickable(onClick = onShow).padding(14.dp),
+            color = Steam.Verdigris, fontFamily = FontFamily.Serif, fontWeight = FontWeight.Bold,
+        )
     }
 }
 
@@ -969,6 +1220,7 @@ private fun HomeScreen(
     apps: List<AppInfo>,
     pinned: List<String>,
     counts: Map<String, Int>,
+    hidden: Set<String>,
     tick: Int,
     prefs: SharedPreferences,
     editing: Boolean,
@@ -1023,7 +1275,7 @@ private fun HomeScreen(
             board.items.orEmpty().forEach { w ->
                 key(w.id) {
                     WidgetHost(w, board, editing) {
-                        WidgetBody(w, board, now, is24, battery, storage, apps, pinned, counts, prefs, editing, onLaunch, onLongPress, onOpenFolder)
+                        WidgetBody(w, board, now, is24, battery, storage, apps, pinned, counts, hidden, prefs, editing, onLaunch, onLongPress, onOpenFolder)
                     }
                 }
             }
@@ -1111,6 +1363,7 @@ private fun WidgetBody(
     apps: List<AppInfo>,
     pinned: List<String>,
     counts: Map<String, Int>,
+    hidden: Set<String>,
     prefs: SharedPreferences,
     editing: Boolean,
     onLaunch: (AppInfo) -> Unit,
@@ -1138,7 +1391,7 @@ private fun WidgetBody(
             ) { onOpenFolder(w.id) }
             WType.PICKS -> AppRowContent(
                 "Chief Engineer's picks",
-                apps.filter { (counts[it.packageName] ?: 0) > 0 }.sortedByDescending { counts[it.packageName] ?: 0 }.take(8),
+                apps.filter { it.packageName !in hidden && (counts[it.packageName] ?: 0) > 0 }.sortedByDescending { counts[it.packageName] ?: 0 }.take(8),
                 "Open a few apps and I will learn which you favour.",
                 onLaunch, onLongPress, iconSize = 60.dp,
             )
@@ -1446,7 +1699,7 @@ private fun ChoiceRow(title: String, sub: String, onClick: () -> Unit) {
             .padding(12.dp),
     ) {
         Text(title, style = MaterialTheme.typography.titleMedium, color = Steam.BrassLight)
-        Text(sub, style = MaterialTheme.typography.bodyMedium, color = Steam.Parchment)
+        if (sub.isNotBlank()) Text(sub, style = MaterialTheme.typography.bodyMedium, color = Steam.Parchment)
     }
 }
 
@@ -1469,9 +1722,17 @@ private fun DrawerScreen(
     onLongPress: (AppInfo) -> Unit,
     onClose: () -> Unit,
 ) {
+    val ctx = LocalContext.current
     var query by remember { mutableStateOf("") }
     val shown = remember(apps, query) {
-        if (query.isBlank()) apps else apps.filter { it.label.contains(query, ignoreCase = true) }
+        if (query.isBlank()) apps
+        else apps.mapNotNull { a -> fuzzyScore(a.label, query)?.let { a to it } }
+            .sortedWith(compareByDescending<Pair<AppInfo, Int>> { it.second }.thenBy { it.first.label.lowercase() })
+            .map { it.first }
+    }
+    val calc = remember(query) { calcResult(query) }
+    val webSearch = {
+        open(ctx, Intent(Intent.ACTION_VIEW, Uri.parse("https://duckduckgo.com/?q=" + Uri.encode(query.trim()))))
     }
 
     Box(Modifier.fillMaxSize()) {
@@ -1487,12 +1748,46 @@ private fun DrawerScreen(
                 onValueChange = { query = it },
                 modifier = Modifier.fillMaxWidth(),
                 singleLine = true,
-                placeholder = { Text("Search the archive") },
+                placeholder = { Text("Search apps, or type a sum") },
                 keyboardOptions = KeyboardOptions(imeAction = ImeAction.Search),
-                keyboardActions = KeyboardActions(onSearch = { shown.firstOrNull()?.let(onLaunch) }),
+                keyboardActions = KeyboardActions(onSearch = {
+                    val first = shown.firstOrNull()
+                    if (first != null) onLaunch(first) else if (calc == null && query.isNotBlank()) webSearch()
+                }),
                 colors = steamFieldColors(),
             )
             Spacer(Modifier.height(12.dp))
+            if (calc != null) {
+                RivetedPanel(
+                    Modifier.fillMaxWidth(),
+                    onClick = {
+                        val cm = ctx.getSystemService(Context.CLIPBOARD_SERVICE) as ClipboardManager
+                        cm.setPrimaryClip(ClipData.newPlainText("result", calc))
+                        Toast.makeText(ctx, "Copied $calc", Toast.LENGTH_SHORT).show()
+                    },
+                ) {
+                    Row(verticalAlignment = Alignment.CenterVertically) {
+                        Text(
+                            "= $calc", fontSize = 28.sp, fontFamily = FontFamily.Serif, fontWeight = FontWeight.Bold,
+                            color = Steam.BrassLight, maxLines = 1, overflow = TextOverflow.Ellipsis, modifier = Modifier.weight(1f),
+                        )
+                        Text("Tap to copy", style = MaterialTheme.typography.labelLarge, color = Steam.Steam)
+                    }
+                }
+                Spacer(Modifier.height(12.dp))
+            }
+            if (calc == null && query.isNotBlank() && shown.isEmpty()) {
+                RivetedPanel(Modifier.fillMaxWidth(), onClick = webSearch) {
+                    Column {
+                        Text("Search the web", style = MaterialTheme.typography.titleMedium, color = Steam.BrassLight)
+                        Text(
+                            "No app matches \u201c${query.trim()}\u201d. Tap to search DuckDuckGo.",
+                            style = MaterialTheme.typography.bodyMedium, color = Steam.Parchment,
+                        )
+                    }
+                }
+                Spacer(Modifier.height(12.dp))
+            }
             LazyVerticalGrid(
                 columns = GridCells.Fixed(4),
                 modifier = Modifier.weight(1f),
