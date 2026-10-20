@@ -2,6 +2,7 @@ package com.steampunk.brassworks
 
 import android.content.ClipData
 import android.content.ClipboardManager
+import android.app.ActivityManager
 import android.content.ComponentName
 import android.content.Context
 import android.content.Intent
@@ -11,6 +12,7 @@ import android.content.pm.LauncherApps
 import android.content.pm.PackageManager
 import android.content.pm.ShortcutInfo
 import android.net.Uri
+import android.util.Base64
 import android.os.BatteryManager
 import android.os.Environment
 import android.os.Process
@@ -80,6 +82,9 @@ import org.json.JSONArray
 import org.json.JSONObject
 import java.math.BigDecimal
 import java.math.MathContext
+import android.net.TrafficStats
+import android.os.SystemClock
+import kotlin.math.ln
 import java.time.LocalDateTime
 import java.time.YearMonth
 import java.time.format.DateTimeFormatter
@@ -347,6 +352,7 @@ enum class WType(
     DIGITAL("Time plaque", "Large digital time and date", 340f, 100f, 150f, 80f),
     BOILER("Boiler pressure", "Battery level on a dial gauge", 164f, 140f, 110f, 110f, "Recommended: your charge at a glance"),
     CARGO("Cargo hold", "Storage used and free", 164f, 140f, 110f, 110f, "Recommended: spot a full phone early"),
+    ENGINE("Engine room", "RAM, battery heat and network flow on three dials", 340f, 140f, 200f, 110f, "Recommended: see what is loading the phone"),
     ALMANAC("Almanac", "Month calendar with today marked", 340f, 280f, 200f, 200f, "Recommended: the month at a glance"),
     MEMO("Memorandum", "A notepad you can type in", 164f, 140f, 150f, 100f, "Recommended: jot things down fast"),
     SHELF("App shelf", "Apps you choose, one tap away", 340f, 130f, 110f, 100f, "Recommended: replaces the old dock"),
@@ -400,6 +406,10 @@ private val BUILTIN_PRESETS = listOf(
     ), true),
     Preset("Planner", listOf(
         PresetItem(WType.CLOCK, 0, 0, 4, 2), PresetItem(WType.ALMANAC, 0, 2, 4, 4), PresetItem(WType.MEMO, 0, 6, 4, 2),
+    ), true),
+    Preset("Tinkerer", listOf(
+        PresetItem(WType.CLOCK, 0, 0, 4, 2), PresetItem(WType.ENGINE, 0, 2, 4, 2),
+        PresetItem(WType.BOILER, 0, 4, 2, 2), PresetItem(WType.CARGO, 2, 4, 2, 2),
     ), true),
 )
 
@@ -720,6 +730,36 @@ class WidgetBoard(private val prefs: SharedPreferences) {
         persistPresets()
     }
 
+    /** A text code for the current layout. Send it to anyone and they can import it. Ids stay private to this phone. */
+    fun exportCode(): String? {
+        val p = snapshot("Shared layout") ?: return null
+        val clean = p.copy(items = p.items.map { it.copy(id = 0L) })
+        val json = encodePresets(listOf(clean))
+        return "BRASSWORKS1:" + Base64.encodeToString(json.toByteArray(Charsets.UTF_8), Base64.URL_SAFE or Base64.NO_WRAP)
+    }
+
+    /** Adds a shared layout to your presets (it is not applied). Returns null if the code is not valid. */
+    fun importCode(code: String): Preset? {
+        val raw = code.trim().removePrefix("BRASSWORKS1:").filter { !it.isWhitespace() }
+        val json = try {
+            String(Base64.decode(raw, Base64.URL_SAFE), Charsets.UTF_8)
+        } catch (e: Exception) {
+            return null
+        }
+        val p = decodePresets(json).firstOrNull() ?: return null
+        val items = p.items.take(20).map {
+            it.copy(col = it.col.coerceIn(0, 3), row = it.row.coerceIn(0, 30), cols = it.cols.coerceIn(1, 4), rows = it.rows.coerceIn(1, 12), id = 0L)
+        }
+        if (items.isEmpty()) return null
+        var name = "Imported layout"
+        var n = 2
+        while (userPresets.any { it.name == name }) { name = "Imported layout $n"; n++ }
+        val imported = Preset(name, items)
+        userPresets = userPresets + imported
+        persistPresets()
+        return imported
+    }
+
     fun deletePreset(name: String) {
         userPresets = userPresets.filter { it.name != name }
         persistPresets()
@@ -782,12 +822,13 @@ fun LauncherRoot(tick: Int, homeSignal: Int) {
     var presetDialog by remember { mutableStateOf(false) }
     var saveDialog by remember { mutableStateOf(false) }
     var hiddenDialog by remember { mutableStateOf(false) }
+    var importDialog by remember { mutableStateOf(false) }
     var hidden by remember { mutableStateOf(loadHidden(prefs)) }
 
     // Pressing the Home button closes everything and returns to the main screen.
     LaunchedEffect(homeSignal) {
         drawer = false; menuApp = null; settings = false; fabMenu = false; picker = false; editing = false
-        openFolder = null; menuFolder = null; folderPick = null; presetDialog = false; saveDialog = false; hiddenDialog = false
+        openFolder = null; menuFolder = null; folderPick = null; presetDialog = false; saveDialog = false; hiddenDialog = false; importDialog = false
     }
     BackHandler(enabled = drawer || menuApp != null || settings || fabMenu || picker || editing || folderPick != null || openFolder != null) {
         when {
@@ -1031,7 +1072,7 @@ fun LauncherRoot(tick: Int, homeSignal: Int) {
                     Column(Modifier.fillMaxWidth(), verticalArrangement = Arrangement.spacedBy(10.dp)) {
                         Text("PRESETS", style = MaterialTheme.typography.titleLarge, color = Steam.BrassLight)
                         Text(
-                            "Tap a preset to apply it. Your current layout is kept as Previous layout. Save stores your layout as a new preset.",
+                            "Tap a preset to apply it. Your current layout is kept as Previous layout. Save stores your layout, Share sends it as a text code, Import adds a code you received.",
                             style = MaterialTheme.typography.labelLarge, color = Steam.Steam,
                         )
                         Column(
@@ -1043,7 +1084,60 @@ fun LauncherRoot(tick: Int, homeSignal: Int) {
                         }
                         CogRow {
                             CogButton("Save") { presetDialog = false; saveDialog = true }
+                            CogButton("Share") {
+                                val code = board.exportCode()
+                                if (code == null) {
+                                    Toast.makeText(ctx, "Nothing to share yet. Add a widget first.", Toast.LENGTH_SHORT).show()
+                                } else {
+                                    val send = Intent(Intent.ACTION_SEND)
+                                        .setType("text/plain")
+                                        .putExtra(Intent.EXTRA_SUBJECT, "Brassworks layout")
+                                        .putExtra(Intent.EXTRA_TEXT, code)
+                                    open(ctx, Intent.createChooser(send, "Share layout"))
+                                }
+                            }
+                            CogButton("Import") { presetDialog = false; importDialog = true }
                             CogButton("Close") { presetDialog = false }
+                        }
+                    }
+                }
+            }
+        }
+
+        // Import a shared layout code
+        if (importDialog) {
+            var code by remember { mutableStateOf("") }
+            Dialog(onDismissRequest = { importDialog = false }) {
+                RivetedPanel(Modifier.fillMaxWidth()) {
+                    Column(Modifier.fillMaxWidth(), verticalArrangement = Arrangement.spacedBy(10.dp)) {
+                        Text("IMPORT LAYOUT", style = MaterialTheme.typography.titleLarge, color = Steam.BrassLight)
+                        Text(
+                            "Paste a layout code someone shared with you. It is added to your presets and nothing changes until you apply it.",
+                            style = MaterialTheme.typography.labelLarge, color = Steam.Steam,
+                        )
+                        OutlinedTextField(
+                            value = code, onValueChange = { code = it }, modifier = Modifier.fillMaxWidth(),
+                            maxLines = 4, placeholder = { Text("BRASSWORKS1:...") }, colors = steamFieldColors(),
+                        )
+                        CogRow {
+                            CogButton("Paste") {
+                                val cm = ctx.getSystemService(Context.CLIPBOARD_SERVICE) as ClipboardManager
+                                val clip = cm.primaryClip
+                                if (clip != null && clip.itemCount > 0) {
+                                    code = clip.getItemAt(0).text?.toString() ?: code
+                                }
+                            }
+                            CogButton("Import") {
+                                val imported = board.importCode(code)
+                                if (imported == null) {
+                                    Toast.makeText(ctx, "That does not look like a Brassworks layout code.", Toast.LENGTH_LONG).show()
+                                } else {
+                                    Toast.makeText(ctx, "Imported ${imported.name}. Find it in Presets.", Toast.LENGTH_LONG).show()
+                                    importDialog = false
+                                    presetDialog = true
+                                }
+                            }
+                            CogButton("Cancel") { importDialog = false }
                         }
                     }
                 }
@@ -1377,6 +1471,7 @@ private fun WidgetBody(
             WType.DIGITAL -> DigitalContent(now, is24)
             WType.BOILER -> GaugeContent(battery, true, "Boiler pressure", "${(battery * 100).toInt()}% charged")
             WType.CARGO -> GaugeContent(storage.first, false, "Cargo hold", "${(storage.first * 100).toInt()}% full")
+            WType.ENGINE -> EngineRoomContent()
             WType.ALMANAC -> AlmanacContent(now)
             WType.MEMO -> MemoContent(w.id, prefs, editing)
             WType.SHELF -> AppRowContent(
@@ -1491,6 +1586,82 @@ private fun GaugeContent(value: Float, dangerLow: Boolean, title: String, captio
             Text(title, fontSize = 14.sp, fontFamily = FontFamily.Serif, fontWeight = FontWeight.Bold, color = Steam.BrassLight, maxLines = 1)
             Text(caption, fontSize = 12.sp, fontFamily = FontFamily.Serif, color = Steam.Steam, maxLines = 1)
         }
+    }
+}
+
+/** "1.2M", "340K" or "0": a compact bytes-per-second figure. */
+private fun shortRate(bps: Long): String = when {
+    bps >= 1_000_000L -> "%.1fM".format(bps / 1_000_000f)
+    bps >= 1_000L -> "${bps / 1_000L}K"
+    else -> "0"
+}
+
+/** Three dials: memory in use, battery heat and network flow. Samples every two seconds while visible. */
+@Composable
+private fun EngineRoomContent() = BoxWithConstraints(Modifier.fillMaxSize()) {
+    val ctx = LocalContext.current
+    val mw = maxWidth
+    val mh = maxHeight
+    var mem by remember { mutableFloatStateOf(0f) }
+    var heat by remember { mutableFloatStateOf(-1f) } // degrees C, -1 = unknown
+    var rx by remember { mutableLongStateOf(-1L) }    // bytes per second, -1 = unknown
+    var tx by remember { mutableLongStateOf(-1L) }
+
+    LaunchedEffect(Unit) {
+        val am = ctx.getSystemService(Context.ACTIVITY_SERVICE) as ActivityManager
+        var lastRx = TrafficStats.getTotalRxBytes()
+        var lastTx = TrafficStats.getTotalTxBytes()
+        var lastT = SystemClock.elapsedRealtime()
+        var first = true
+        while (true) {
+            val mi = ActivityManager.MemoryInfo()
+            am.getMemoryInfo(mi)
+            mem = if (mi.totalMem > 0L) 1f - mi.availMem.toFloat() / mi.totalMem.toFloat() else 0f
+
+            val t = ctx.registerReceiver(null, IntentFilter(Intent.ACTION_BATTERY_CHANGED))
+                ?.getIntExtra(BatteryManager.EXTRA_TEMPERATURE, Int.MIN_VALUE)
+            heat = if (t == null || t == Int.MIN_VALUE) -1f else t / 10f
+
+            val nowRx = TrafficStats.getTotalRxBytes()
+            val nowTx = TrafficStats.getTotalTxBytes()
+            val nowT = SystemClock.elapsedRealtime()
+            val dt = (nowT - lastT) / 1000f
+            if (nowRx == TrafficStats.UNSUPPORTED.toLong() || nowTx == TrafficStats.UNSUPPORTED.toLong()) {
+                rx = -1L; tx = -1L
+            } else if (first || dt <= 0f) {
+                rx = 0L; tx = 0L
+            } else {
+                rx = ((nowRx - lastRx) / dt).toLong().coerceAtLeast(0L)
+                tx = ((nowTx - lastTx) / dt).toLong().coerceAtLeast(0L)
+            }
+            first = false
+            lastRx = nowRx; lastTx = nowTx; lastT = nowT
+            delay(2000)
+        }
+    }
+
+    val dial = maxOf(minOf((mw - 16.dp) / 3, mh - 34.dp), 30.dp)
+    // network flow on a log scale: 0 to 100 MB/s
+    val flow = if (rx < 0L) 0f else (ln(1f + rx / 1000f) / ln(1f + 100_000f)).coerceIn(0f, 1f)
+    Row(Modifier.fillMaxSize(), horizontalArrangement = Arrangement.spacedBy(8.dp), verticalAlignment = Alignment.CenterVertically) {
+        EngineDial(Modifier.weight(1f), dial, mem, "Memory", "${(mem * 100).roundToInt()}% used")
+        EngineDial(
+            Modifier.weight(1f), dial, ((heat - 20f) / 40f).coerceIn(0f, 1f), "Heat",
+            if (heat < 0f) "n/a" else "${heat.roundToInt()}°C",
+        )
+        EngineDial(
+            Modifier.weight(1f), dial, flow, "Flow",
+            if (rx < 0L) "n/a" else "↓${shortRate(rx)} ↑${shortRate(tx)}",
+        )
+    }
+}
+
+@Composable
+private fun EngineDial(modifier: Modifier, dial: Dp, value: Float, title: String, caption: String) {
+    Column(modifier, horizontalAlignment = Alignment.CenterHorizontally) {
+        PressureGauge(value, Modifier.size(dial))
+        Text(title, fontSize = 12.sp, fontFamily = FontFamily.Serif, fontWeight = FontWeight.Bold, color = Steam.BrassLight, maxLines = 1)
+        Text(caption, fontSize = 11.sp, fontFamily = FontFamily.Serif, color = Steam.Steam, maxLines = 1)
     }
 }
 
