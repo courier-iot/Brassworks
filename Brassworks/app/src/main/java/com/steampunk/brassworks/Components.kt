@@ -27,6 +27,8 @@ import androidx.compose.ui.draw.shadow
 import androidx.compose.ui.geometry.Offset
 import androidx.compose.ui.geometry.Size
 import androidx.compose.ui.graphics.Brush
+import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.graphics.Shadow
 import androidx.compose.ui.graphics.ImageBitmap
 import androidx.compose.ui.graphics.StrokeCap
 import androidx.compose.ui.graphics.graphicsLayer
@@ -36,6 +38,8 @@ import androidx.compose.ui.graphics.drawscope.DrawScope
 import androidx.compose.ui.graphics.drawscope.Stroke
 import androidx.compose.ui.graphics.drawscope.rotate
 import androidx.compose.ui.unit.Dp
+import androidx.compose.ui.platform.LocalDensity
+import androidx.compose.ui.text.TextStyle
 import androidx.compose.ui.text.font.FontFamily
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
@@ -331,3 +335,87 @@ fun CogRow(modifier: Modifier = Modifier, content: @Composable () -> Unit) {
         verticalArrangement = Arrangement.spacedBy(4.dp),
     ) { content() }
 }
+
+
+// ───────────────────────── Nixie tube clock ─────────────────────────
+
+private val NixieOrange = Color(0xFFFFA24D)
+private val NixieGlow = Color(0xFFFF6A00)
+
+@Composable
+private fun NixieTube(digit: Char, w: Dp, h: Dp) {
+    val glass = RoundedCornerShape(topStart = w / 2, topEnd = w / 2, bottomStart = 6.dp, bottomEnd = 6.dp)
+    val fs = with(LocalDensity.current) { (h * 0.60f).toSp() }
+    Box(
+        Modifier.size(w, h).clip(glass)
+            .background(Brush.verticalGradient(listOf(Color(0xFF241109), Color(0xFF0B0604))))
+            .border(1.5.dp, Brush.verticalGradient(listOf(Steam.Brass, Steam.BrassDark)), glass),
+        contentAlignment = Alignment.Center,
+    ) {
+        Canvas(Modifier.fillMaxSize()) {
+            // faint anode mesh, a glass highlight and the brass base
+            val step = size.width / 6f
+            var x = step
+            while (x < size.width) {
+                drawLine(NixieGlow.copy(alpha = 0.10f), Offset(x, 0f), Offset(x, size.height), strokeWidth = 1f)
+                x += step
+            }
+            var y = step
+            while (y < size.height) {
+                drawLine(NixieGlow.copy(alpha = 0.07f), Offset(0f, y), Offset(size.width, y), strokeWidth = 1f)
+                y += step
+            }
+            drawRect(Color.White.copy(alpha = 0.07f), topLeft = Offset(size.width * 0.12f, size.height * 0.06f), size = Size(size.width * 0.08f, size.height * 0.5f))
+            drawRect(Brush.verticalGradient(listOf(Steam.Brass, Steam.BrassDark)), topLeft = Offset(0f, size.height * 0.92f), size = Size(size.width, size.height * 0.08f))
+        }
+        // the unlit cathodes behind the lit one
+        Text("8", fontSize = fs, fontFamily = FontFamily.SansSerif, color = NixieGlow.copy(alpha = 0.14f))
+        if (digit != ' ') {
+            Text(
+                digit.toString(), fontSize = fs, fontFamily = FontFamily.SansSerif, fontWeight = FontWeight.Medium,
+                color = NixieOrange, style = TextStyle(shadow = Shadow(NixieGlow, Offset.Zero, 24f)),
+            )
+        }
+    }
+}
+
+@Composable
+private fun NixieColon(w: Dp, h: Dp) {
+    val glow = if (LocalAnimations.current) {
+        val t = rememberInfiniteTransition(label = "nixieColon")
+        val a by t.animateFloat(1f, 0.35f, infiniteRepeatable(tween(900), RepeatMode.Reverse), label = "a")
+        a
+    } else 1f
+    Canvas(Modifier.size(w, h)) {
+        val r = size.width * 0.14f
+        for (f in listOf(0.34f, 0.66f)) {
+            val c = Offset(size.width / 2f, size.height * f)
+            drawCircle(NixieGlow.copy(alpha = 0.35f * glow), r * 2.6f, c)
+            drawCircle(NixieOrange.copy(alpha = glow), r, c)
+        }
+    }
+}
+
+/** Four glowing tubes (HHMM, a space gives a dark tube) with blinking colon dots and a date line. */
+@Composable
+fun NixieClock(hhmm: String, date: String?, modifier: Modifier = Modifier) =
+    BoxWithConstraints(modifier) {
+        val mw = maxWidth
+        val mh = maxHeight
+        val gap = 4.dp
+        val dateH = if (date != null && mh > 80.dp) 22.dp else 0.dp
+        val th = maxOf(minOf(mh - dateH, (mw - gap * 4) / 2.64f), 20.dp)
+        val tw = th * 0.56f
+        Column(Modifier.fillMaxSize(), horizontalAlignment = Alignment.CenterHorizontally, verticalArrangement = Arrangement.Center) {
+            Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(gap)) {
+                NixieTube(hhmm[0], tw, th)
+                NixieTube(hhmm[1], tw, th)
+                NixieColon(tw * 0.4f, th)
+                NixieTube(hhmm[2], tw, th)
+                NixieTube(hhmm[3], tw, th)
+            }
+            if (dateH > 0.dp && date != null) {
+                Text(date, fontSize = 13.sp, fontFamily = FontFamily.Serif, color = Steam.Parchment, maxLines = 1, modifier = Modifier.padding(top = 4.dp))
+            }
+        }
+    }

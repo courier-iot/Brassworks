@@ -21,6 +21,7 @@ import androidx.compose.animation.fadeIn
 import androidx.compose.animation.fadeOut
 import androidx.compose.animation.slideInVertically
 import androidx.compose.animation.slideOutVertically
+import androidx.compose.foundation.Canvas
 import androidx.compose.foundation.ExperimentalFoundationApi
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
@@ -45,6 +46,10 @@ import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.draw.clipToBounds
+import androidx.compose.ui.geometry.CornerRadius
+import androidx.compose.ui.geometry.Offset
+import androidx.compose.ui.geometry.Size
+import androidx.compose.ui.graphics.drawscope.Stroke
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.ImageBitmap
 import androidx.compose.ui.graphics.SolidColor
@@ -57,6 +62,7 @@ import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.input.ImeAction
 import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.text.style.TextOverflow
+import androidx.compose.ui.unit.Dp
 import androidx.compose.ui.unit.IntOffset
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
@@ -72,6 +78,8 @@ import java.time.YearMonth
 import java.time.format.DateTimeFormatter
 import java.time.format.TextStyle as JTextStyle
 import java.util.Locale
+import kotlin.math.ceil
+import kotlin.math.roundToInt
 
 // ───────────────────────── Apps ─────────────────────────
 
@@ -165,15 +173,16 @@ enum class WType(
     val defW: Float, val defH: Float, val minW: Float, val minH: Float,
     val tip: String? = null,
 ) {
-    CLOCK("Brass clock", "Analogue dial with the time", 340f, 170f, 150f, 120f, "Recommended: the classic centrepiece"),
+    CLOCK("Nixie clock", "Glowing tube digits in a brass frame", 340f, 140f, 150f, 100f, "Recommended: the centrepiece"),
+    ANALOG("Brass dial", "Analogue dial with the time", 340f, 140f, 150f, 120f),
     DIGITAL("Time plaque", "Large digital time and date", 340f, 100f, 150f, 80f),
     BOILER("Boiler pressure", "Battery level on a dial gauge", 164f, 140f, 110f, 110f, "Recommended: your charge at a glance"),
     CARGO("Cargo hold", "Storage used and free", 164f, 140f, 110f, 110f, "Recommended: spot a full phone early"),
-    ALMANAC("Almanac", "Month calendar with today marked", 340f, 250f, 200f, 200f, "Recommended: the month at a glance"),
+    ALMANAC("Almanac", "Month calendar with today marked", 340f, 280f, 200f, 200f, "Recommended: the month at a glance"),
     MEMO("Memorandum", "A notepad you can type in", 164f, 140f, 150f, 100f, "Recommended: jot things down fast"),
     SHELF("App shelf", "Apps you choose, one tap away", 340f, 130f, 110f, 100f, "Recommended: replaces the old dock"),
     FOLDER("Folder", "A named bundle of apps. Tap to open it", 164f, 150f, 110f, 110f, "Recommended: keeps related apps tidy"),
-    PICKS("Chief Engineer's picks", "Apps you open most, learned on this phone", 340f, 130f, 110f, 100f, "Recommended: suggestions from your habits"),
+    PICKS("Chief Engineer's picks", "Apps you open most, learned on this phone", 340f, 210f, 110f, 100f, "Recommended: suggestions from your habits"),
 }
 
 data class WidgetItem(val id: Long, val type: WType, val x: Float, val y: Float, val w: Float, val h: Float)
@@ -200,11 +209,75 @@ private fun decode(s: String?): List<WidgetItem>? {
     } catch (e: Exception) { null }
 }
 
-/** Holds every widget's position and size (in dp) and saves them. */
+// ───────────────────────── Presets ─────────────────────────
+
+/** One widget slot in a preset, in grid cells (so it fits any screen width). */
+data class PresetItem(val type: WType, val col: Int, val row: Int, val cols: Int, val rows: Int, val id: Long = 0L)
+data class Preset(val name: String, val items: List<PresetItem>, val builtin: Boolean = false)
+
+private const val AUTO_PRESET = "Previous layout"
+
+private val BUILTIN_PRESETS = listOf(
+    Preset("Classic", listOf(
+        PresetItem(WType.CLOCK, 0, 0, 4, 2), PresetItem(WType.BOILER, 0, 2, 2, 2),
+        PresetItem(WType.CARGO, 2, 2, 2, 2), PresetItem(WType.SHELF, 0, 4, 4, 2),
+    ), true),
+    Preset("Minimal", listOf(
+        PresetItem(WType.CLOCK, 0, 0, 4, 2), PresetItem(WType.PICKS, 0, 2, 4, 3),
+    ), true),
+    Preset("Engineer", listOf(
+        PresetItem(WType.CLOCK, 0, 0, 4, 2), PresetItem(WType.BOILER, 0, 2, 2, 2), PresetItem(WType.CARGO, 2, 2, 2, 2),
+        PresetItem(WType.MEMO, 0, 4, 2, 2), PresetItem(WType.FOLDER, 2, 4, 2, 2),
+    ), true),
+    Preset("Planner", listOf(
+        PresetItem(WType.CLOCK, 0, 0, 4, 2), PresetItem(WType.ALMANAC, 0, 2, 4, 4), PresetItem(WType.MEMO, 0, 6, 4, 2),
+    ), true),
+)
+
+private fun encodePresets(list: List<Preset>): String = JSONArray().also { arr ->
+    list.forEach { p ->
+        val its = JSONArray()
+        p.items.forEach { i ->
+            its.put(
+                JSONObject().put("t", i.type.name).put("c", i.col).put("r", i.row)
+                    .put("cs", i.cols).put("rs", i.rows).put("id", i.id)
+            )
+        }
+        arr.put(JSONObject().put("name", p.name).put("items", its))
+    }
+}.toString()
+
+private fun decodePresets(s: String?): List<Preset> {
+    if (s == null) return emptyList()
+    return try {
+        val a = JSONArray(s)
+        (0 until a.length()).map { i ->
+            val o = a.getJSONObject(i)
+            val its = o.getJSONArray("items")
+            Preset(
+                o.getString("name"),
+                (0 until its.length()).mapNotNull { j ->
+                    val x = its.getJSONObject(j)
+                    val t = WType.entries.firstOrNull { e -> e.name == x.getString("t") } ?: return@mapNotNull null
+                    PresetItem(t, x.getInt("c"), x.getInt("r"), x.getInt("cs"), x.getInt("rs"), x.optLong("id", 0L))
+                },
+            )
+        }
+    } catch (e: Exception) { emptyList() }
+}
+
+/** Holds every widget's position and size (in dp), the grid rules, folders and presets. */
 class WidgetBoard(private val prefs: SharedPreferences) {
     var items by mutableStateOf(decode(prefs.getString("widgets_v1", null)))
     var areaW by mutableFloatStateOf(0f)
     var areaH by mutableFloatStateOf(0f)
+
+    /** true = fixed grid (snap, no overlap); false = floating (place anywhere). */
+    var gridMode by mutableStateOf(prefs.getBoolean("grid", true))
+        private set
+
+    var userPresets by mutableStateOf(decodePresets(prefs.getString("presets_v1", null)))
+        private set
 
     /** Each Folder widget has its own name and its own list of apps. */
     val folderNames = mutableStateMapOf<Long, String>()
@@ -226,6 +299,8 @@ class WidgetBoard(private val prefs: SharedPreferences) {
             .apply()
     }
 
+    private fun hasData(id: Long) = prefs.contains("fname_$id") || prefs.contains("note_$id")
+
     fun addToFolder(id: Long, pkg: String) {
         val cur = folderApps[id].orEmpty()
         if (pkg !in cur) { folderApps[id] = cur + pkg; saveFolder(id) }
@@ -241,19 +316,124 @@ class WidgetBoard(private val prefs: SharedPreferences) {
         saveFolder(id)
     }
 
-    fun ensureDefaults() {
-        if (items != null || areaW <= 0f) return
-        val w = areaW
-        val half = (w - 12f) / 2f
-        val t = System.currentTimeMillis()
-        items = listOf(
-            WidgetItem(t, WType.CLOCK, 0f, 0f, w, 170f),
-            WidgetItem(t + 1, WType.BOILER, 0f, 182f, half, 140f),
-            WidgetItem(t + 2, WType.CARGO, half + 12f, 182f, half, 140f),
-            WidgetItem(t + 3, WType.SHELF, 0f, 334f, w, 130f),
-        )
-        persist()
+    // ----- grid maths -----
+
+    private val gridCols = 4
+    private val gap = 8f
+    val columns: Int get() = gridCols
+    val cellW: Float get() = if (areaW > 0f) (areaW - gap * (gridCols - 1)) / gridCols else 80f
+    val cellH: Float get() = cellW * 0.85f
+    val stepX: Float get() = cellW + gap
+    val stepY: Float get() = cellH + gap
+    val maxRows: Int get() = if (areaH > 0f) maxOf(1, ((areaH + gap) / stepY).toInt()) else 8
+
+    private fun spanW(n: Int) = n * cellW + (n - 1) * gap
+    private fun spanH(n: Int) = n * cellH + (n - 1) * gap
+    private fun colsOf(w: Float) = ((w + gap) / stepX).roundToInt().coerceIn(1, gridCols)
+    private fun rowsOf(h: Float) = ((h + gap) / stepY).roundToInt().coerceAtLeast(1)
+    private fun minColsOf(t: WType) = ceil((t.minW + gap) / stepX).toInt().coerceIn(1, gridCols)
+    private fun minRowsOf(t: WType) = ceil((t.minH + gap) / stepY).toInt().coerceAtLeast(1)
+
+    private fun place(w: WidgetItem, col: Int, row: Int, c: Int, r: Int) =
+        w.copy(x = col * stepX, y = row * stepY, w = spanW(c), h = spanH(r))
+
+    private fun snapped(w: WidgetItem): WidgetItem {
+        val c = maxOf(colsOf(w.w), minColsOf(w.type))
+        val r = maxOf(rowsOf(w.h), minRowsOf(w.type))
+        val col = (w.x / stepX).roundToInt().coerceIn(0, gridCols - c)
+        val row = (w.y / stepY).roundToInt().coerceIn(0, maxOf(0, maxRows - r))
+        return place(w, col, row, c, r)
     }
+
+    private fun overlaps(a: WidgetItem, b: WidgetItem) =
+        a.x < b.x + b.w - 1f && b.x < a.x + a.w - 1f && a.y < b.y + b.h - 1f && b.y < a.y + a.h - 1f
+
+    private fun newOcc() = Array(maxRows) { BooleanArray(gridCols) }
+
+    private fun Array<BooleanArray>.fits(col: Int, row: Int, c: Int, r: Int): Boolean {
+        if (col < 0 || row < 0 || col + c > gridCols || row + r > size) return false
+        for (rr in row until row + r) for (cc in col until col + c) if (this[rr][cc]) return false
+        return true
+    }
+
+    private fun Array<BooleanArray>.mark(col: Int, row: Int, c: Int, r: Int) {
+        for (rr in row until minOf(row + r, size)) for (cc in col until minOf(col + c, gridCols)) this[rr][cc] = true
+    }
+
+    /** The free spot closest to (nearCol, nearRow) that fits c x r cells. */
+    private fun Array<BooleanArray>.findSpot(c: Int, r: Int, nearCol: Int, nearRow: Int): Pair<Int, Int>? {
+        var best: Pair<Int, Int>? = null
+        var bestD = Int.MAX_VALUE
+        for (row in 0..(size - r)) for (col in 0..(gridCols - c)) {
+            if (fits(col, row, c, r)) {
+                val d = (col - nearCol) * (col - nearCol) + (row - nearRow) * (row - nearRow)
+                if (d < bestD) { bestD = d; best = col to row }
+            }
+        }
+        return best
+    }
+
+    private fun markAll(occ: Array<BooleanArray>, list: List<WidgetItem>) {
+        list.forEach { o ->
+            occ.mark((o.x / stepX).roundToInt().coerceAtLeast(0), (o.y / stepY).roundToInt().coerceAtLeast(0), colsOf(o.w), rowsOf(o.h))
+        }
+    }
+
+    /** Snap everything to the grid and remove overlaps. If dropIfNoRoom, widgets with no space are left out. */
+    private fun tidyList(list: List<WidgetItem>, dropIfNoRoom: Boolean): List<WidgetItem> {
+        val occ = newOcc()
+        val out = mutableListOf<WidgetItem>()
+        for (w in list.sortedWith(compareBy({ it.y }, { it.x }))) {
+            var c = maxOf(colsOf(w.w), minColsOf(w.type))
+            var r = maxOf(rowsOf(w.h), minRowsOf(w.type))
+            val nc = (w.x / stepX).roundToInt().coerceIn(0, gridCols - c)
+            val nr = (w.y / stepY).roundToInt().coerceAtLeast(0)
+            var spot = occ.findSpot(c, r, nc, nr)
+            if (spot == null) {
+                c = minColsOf(w.type); r = minRowsOf(w.type)
+                spot = occ.findSpot(c, r, nc, nr)
+            }
+            if (spot != null) {
+                occ.mark(spot.first, spot.second, c, r)
+                out += place(w, spot.first, spot.second, c, r)
+            } else if (!dropIfNoRoom) {
+                out += place(w, nc.coerceIn(0, gridCols - c), nr, c, r)
+            }
+        }
+        return out
+    }
+
+    fun setGridMode(on: Boolean) {
+        gridMode = on
+        prefs.edit().putBoolean("grid", on).apply()
+        if (on) {
+            items = items?.let { tidyList(it, false) }
+            persist()
+        }
+    }
+
+    // ----- first run / defaults -----
+
+    fun ensureDefaults() {
+        if (areaW <= 0f) return
+        val cur = items
+        if (cur == null) {
+            items = tidyList(instantiate(BUILTIN_PRESETS[0], emptyList()), true)
+            prefs.edit().putBoolean("grid_done", true).apply()
+            persist()
+        } else if (gridMode && !prefs.getBoolean("grid_done", false)) {
+            // layouts made before the grid existed get tidied once
+            items = tidyList(cur, false)
+            prefs.edit().putBoolean("grid_done", true).apply()
+            persist()
+        }
+    }
+
+    // ----- drag / resize -----
+
+    private var start: WidgetItem? = null
+
+    fun begin(id: Long) { start = items?.firstOrNull { it.id == id } }
 
     private fun update(id: Long, f: (WidgetItem) -> WidgetItem) {
         items = items?.map { if (it.id == id) f(it) else it }
@@ -275,14 +455,58 @@ class WidgetBoard(private val prefs: SharedPreferences) {
         )
     }
 
+    /** Called when a drag or resize ends. In grid mode the widget snaps into a free spot. */
+    fun settle(id: Long, resizing: Boolean) {
+        val list = items ?: return
+        if (gridMode) {
+            val cur = list.firstOrNull { it.id == id } ?: return
+            val others = list.filter { it.id != id }
+            val s = snapped(cur)
+            val back = start?.takeIf { it.id == id }?.let { snapped(it) }
+            val result = when {
+                others.none { overlaps(s, it) } -> s
+                resizing -> back ?: s
+                else -> nearestFree(cur, others) ?: back ?: s
+            }
+            items = list.map { if (it.id == id) result else it }
+        }
+        persist()
+    }
+
+    private fun nearestFree(cur: WidgetItem, others: List<WidgetItem>): WidgetItem? {
+        val occ = newOcc()
+        markAll(occ, others)
+        val c = maxOf(colsOf(cur.w), minColsOf(cur.type))
+        val r = maxOf(rowsOf(cur.h), minRowsOf(cur.type))
+        val spot = occ.findSpot(c, r, (cur.x / stepX).roundToInt(), (cur.y / stepY).roundToInt()) ?: return null
+        return place(cur, spot.first, spot.second, c, r)
+    }
+
+    // ----- add / remove -----
+
+    /** Returns the new widget's id, or -1 if there is no room left on the grid. */
     fun add(type: WType): Long {
-        val n = items?.size ?: 0
-        val w = minOf(type.defW, areaW)
-        val h = type.defH
-        val x = ((areaW - w) / 2f).coerceAtLeast(0f)
-        val y = (24f + (n % 6) * 28f).coerceAtMost(maxOf(0f, areaH - h))
         val id = System.currentTimeMillis()
-        items = (items ?: emptyList()) + WidgetItem(id, type, x, y, w, h)
+        if (gridMode) {
+            val occ = newOcc()
+            markAll(occ, items.orEmpty())
+            var c = maxOf(colsOf(type.defW), minColsOf(type))
+            var r = maxOf(rowsOf(type.defH), minRowsOf(type))
+            var spot = occ.findSpot(c, r, 0, 0)
+            if (spot == null) {
+                c = minColsOf(type); r = minRowsOf(type)
+                spot = occ.findSpot(c, r, 0, 0)
+            }
+            if (spot == null) return -1L
+            items = items.orEmpty() + place(WidgetItem(id, type, 0f, 0f, 0f, 0f), spot.first, spot.second, c, r)
+        } else {
+            val n = items?.size ?: 0
+            val w = minOf(type.defW, areaW)
+            val h = type.defH
+            val x = ((areaW - w) / 2f).coerceAtLeast(0f)
+            val y = (24f + (n % 6) * 28f).coerceAtMost(maxOf(0f, areaH - h))
+            items = items.orEmpty() + WidgetItem(id, type, x, y, w, h)
+        }
         if (type == WType.FOLDER) {
             folderNames[id] = "Folder"
             folderApps[id] = emptyList()
@@ -302,6 +526,64 @@ class WidgetBoard(private val prefs: SharedPreferences) {
 
     fun persist() {
         items?.let { prefs.edit().putString("widgets_v1", encode(it)).apply() }
+    }
+
+    // ----- presets -----
+
+    private fun snapshot(name: String): Preset? {
+        val list = items.orEmpty()
+        if (list.isEmpty()) return null
+        val tidy = tidyList(list, false)
+        return Preset(
+            name,
+            tidy.map { PresetItem(it.type, (it.x / stepX).roundToInt(), (it.y / stepY).roundToInt(), colsOf(it.w), rowsOf(it.h), it.id) },
+        )
+    }
+
+    private fun persistPresets() {
+        prefs.edit().putString("presets_v1", encodePresets(userPresets)).apply()
+    }
+
+    /** Save the current layout under a name. Using an existing name updates that preset. */
+    fun savePreset(name: String) {
+        val p = snapshot(name) ?: return
+        userPresets = userPresets.filter { it.name != name } + p
+        persistPresets()
+    }
+
+    fun deletePreset(name: String) {
+        userPresets = userPresets.filter { it.name != name }
+        persistPresets()
+    }
+
+    /**
+     * Turn a preset into widgets. Widgets you already have (same id, else same type) are reused,
+     * so notes and folder contents survive. Returns how many widgets did not fit.
+     */
+    private fun instantiate(p: Preset, existing: List<WidgetItem>): List<WidgetItem> {
+        val used = mutableSetOf<Long>()
+        var stamp = System.currentTimeMillis()
+        return p.items.map { pi ->
+            val reuse = existing.firstOrNull { it.id == pi.id && pi.id != 0L && it.id !in used && it.type == pi.type }
+                ?: existing.firstOrNull { it.type == pi.type && it.id !in used }
+            val id = when {
+                reuse != null -> reuse.id
+                pi.id != 0L && pi.id !in used && existing.none { it.id == pi.id } && hasData(pi.id) -> pi.id
+                else -> ++stamp
+            }
+            used += id
+            WidgetItem(id, pi.type, pi.col * stepX, pi.row * stepY, spanW(pi.cols), spanH(pi.rows))
+        }
+    }
+
+    fun applyPreset(p: Preset): Int {
+        savePreset(AUTO_PRESET) // undo point
+        val raw = instantiate(p, items.orEmpty())
+        val placed = tidyList(raw, true)
+        items = placed
+        placed.filter { it.type == WType.FOLDER }.forEach { if (it.id !in folderNames) loadFolder(it.id) }
+        persist()
+        return raw.size - placed.size
     }
 }
 
@@ -328,11 +610,13 @@ fun LauncherRoot(tick: Int, homeSignal: Int) {
     var openFolder by remember { mutableStateOf<Long?>(null) }
     var menuFolder by remember { mutableStateOf<Long?>(null) }
     var folderPick by remember { mutableStateOf<AppInfo?>(null) }
+    var presetDialog by remember { mutableStateOf(false) }
+    var saveDialog by remember { mutableStateOf(false) }
 
     // Pressing the Home button closes everything and returns to the main screen.
     LaunchedEffect(homeSignal) {
         drawer = false; menuApp = null; settings = false; fabMenu = false; picker = false; editing = false
-        openFolder = null; menuFolder = null; folderPick = null
+        openFolder = null; menuFolder = null; folderPick = null; presetDialog = false; saveDialog = false
     }
     BackHandler(enabled = drawer || menuApp != null || settings || fabMenu || picker || editing || folderPick != null || openFolder != null) {
         when {
@@ -352,6 +636,16 @@ fun LauncherRoot(tick: Int, homeSignal: Int) {
         prefs.edit().putString("pinned", list.joinToString(",")).apply()
     }
 
+    fun applyPreset(p: Preset) {
+        val dropped = board.applyPreset(p)
+        presetDialog = false
+        Toast.makeText(
+            ctx,
+            "Applied ${p.name}" + (if (dropped > 0) ". $dropped widget(s) did not fit." else ""),
+            Toast.LENGTH_SHORT,
+        ).show()
+    }
+
     val launch: (AppInfo) -> Unit = { app ->
         counts = counts + (app.packageName to ((counts[app.packageName] ?: 0) + 1))
         prefs.edit().putString("counts", counts.entries.joinToString(",") { "${it.key}:${it.value}" }).apply()
@@ -367,8 +661,8 @@ fun LauncherRoot(tick: Int, homeSignal: Int) {
                     onLaunch = launch,
                     onLongPress = { menuApp = it; menuFolder = null },
                     onOpenFolder = { openFolder = it },
-                    onFabTap = { fabMenu = true },
-                    onFabHold = { drawer = true },
+                    onFabTap = { drawer = true },
+                    onFabHold = { fabMenu = true },
                     onEnterEdit = { editing = true },
                     onAdd = { picker = true },
                     onDone = { editing = false },
@@ -436,10 +730,11 @@ fun LauncherRoot(tick: Int, homeSignal: Int) {
                 RivetedPanel(Modifier.fillMaxWidth()) {
                     Column(Modifier.fillMaxWidth(), verticalArrangement = Arrangement.spacedBy(10.dp)) {
                         Text("THE WORKSHOP", style = MaterialTheme.typography.titleLarge, color = Steam.BrassLight)
-                        Text("Hold the gear to open the archive. Add places a new widget; Arrange moves and resizes them.", style = MaterialTheme.typography.labelLarge, color = Steam.Steam)
+                        Text("Tap the gear to open the archive. Add places a widget, Arrange moves and resizes them, Presets saves and applies layouts.", style = MaterialTheme.typography.labelLarge, color = Steam.Steam)
                         CogRow {
                             CogButton("Add") { fabMenu = false; picker = true }
                             CogButton("Arrange") { fabMenu = false; editing = true }
+                            CogButton("Presets") { fabMenu = false; presetDialog = true }
                             CogButton("Settings") { fabMenu = false; settings = true }
                             CogButton("Close") { fabMenu = false }
                         }
@@ -475,8 +770,12 @@ fun LauncherRoot(tick: Int, homeSignal: Int) {
                         CogRow {
                             CogButton("New") {
                                 val id = board.add(WType.FOLDER)
-                                board.addToFolder(id, app.packageName)
-                                Toast.makeText(ctx, "Created a new folder on your home screen", Toast.LENGTH_SHORT).show()
+                                if (id < 0L) {
+                                    Toast.makeText(ctx, "No room left on the grid for a new folder.", Toast.LENGTH_LONG).show()
+                                } else {
+                                    board.addToFolder(id, app.packageName)
+                                    Toast.makeText(ctx, "Created a new folder on your home screen", Toast.LENGTH_SHORT).show()
+                                }
                                 folderPick = null
                             }
                             CogButton("Cancel") { folderPick = null }
@@ -496,6 +795,60 @@ fun LauncherRoot(tick: Int, homeSignal: Int) {
             )
         }
 
+        // Presets list
+        if (presetDialog) {
+            Dialog(onDismissRequest = { presetDialog = false }) {
+                RivetedPanel(Modifier.fillMaxWidth()) {
+                    Column(Modifier.fillMaxWidth(), verticalArrangement = Arrangement.spacedBy(10.dp)) {
+                        Text("PRESETS", style = MaterialTheme.typography.titleLarge, color = Steam.BrassLight)
+                        Text(
+                            "Tap a preset to apply it. Your current layout is kept as Previous layout. Save stores your layout as a new preset.",
+                            style = MaterialTheme.typography.labelLarge, color = Steam.Steam,
+                        )
+                        Column(
+                            Modifier.heightIn(max = 360.dp).verticalScroll(rememberScrollState()),
+                            verticalArrangement = Arrangement.spacedBy(8.dp),
+                        ) {
+                            BUILTIN_PRESETS.forEach { p -> PresetRow(p, null) { applyPreset(p) } }
+                            board.userPresets.forEach { p -> PresetRow(p, { board.deletePreset(p.name) }) { applyPreset(p) } }
+                        }
+                        CogRow {
+                            CogButton("Save") { presetDialog = false; saveDialog = true }
+                            CogButton("Close") { presetDialog = false }
+                        }
+                    }
+                }
+            }
+        }
+
+        // Save the current layout as a preset
+        if (saveDialog) {
+            var name by remember { mutableStateOf("") }
+            Dialog(onDismissRequest = { saveDialog = false }) {
+                RivetedPanel(Modifier.fillMaxWidth()) {
+                    Column(Modifier.fillMaxWidth(), verticalArrangement = Arrangement.spacedBy(10.dp)) {
+                        Text("SAVE PRESET", style = MaterialTheme.typography.titleLarge, color = Steam.BrassLight)
+                        Text("Name your layout. Using an existing name updates that preset.", style = MaterialTheme.typography.labelLarge, color = Steam.Steam)
+                        OutlinedTextField(
+                            value = name, onValueChange = { name = it }, modifier = Modifier.fillMaxWidth(),
+                            singleLine = true, placeholder = { Text("Preset name") }, colors = steamFieldColors(),
+                        )
+                        CogRow {
+                            CogButton("Save") {
+                                val n = name.trim()
+                                if (n.isNotEmpty()) {
+                                    board.savePreset(n)
+                                    Toast.makeText(ctx, "Saved preset $n", Toast.LENGTH_SHORT).show()
+                                    saveDialog = false
+                                }
+                            }
+                            CogButton("Cancel") { saveDialog = false }
+                        }
+                    }
+                }
+            }
+        }
+
         // Widget picker
         if (picker) {
             Dialog(onDismissRequest = { picker = false }) {
@@ -507,7 +860,15 @@ fun LauncherRoot(tick: Int, homeSignal: Int) {
                             verticalArrangement = Arrangement.spacedBy(8.dp),
                         ) {
                             WType.entries.forEach { t ->
-                                PickerRow(t) { board.add(t); picker = false; editing = true }
+                                PickerRow(t) {
+                                    val id = board.add(t)
+                                    picker = false
+                                    if (id < 0L) {
+                                        Toast.makeText(ctx, "No room left on the grid. Remove or shrink a widget first.", Toast.LENGTH_LONG).show()
+                                    } else {
+                                        editing = true
+                                    }
+                                }
                             }
                         }
                         CogRow { CogButton("Cancel") { picker = false } }
@@ -535,6 +896,20 @@ fun LauncherRoot(tick: Int, homeSignal: Int) {
                                 ),
                             )
                         }
+                        Row(verticalAlignment = Alignment.CenterVertically) {
+                            Column(Modifier.weight(1f)) {
+                                Text("Fixed grid", style = MaterialTheme.typography.titleMedium, color = Steam.Parchment)
+                                Text("Widgets snap into place and cannot overlap. Off lets them float anywhere.", style = MaterialTheme.typography.labelLarge, color = Steam.Steam)
+                            }
+                            Switch(
+                                checked = board.gridMode,
+                                onCheckedChange = { board.setGridMode(it) },
+                                colors = SwitchDefaults.colors(
+                                    checkedThumbColor = Steam.BrassLight, checkedTrackColor = Steam.BrassDark,
+                                    uncheckedThumbColor = Steam.Steam, uncheckedTrackColor = Steam.Soot,
+                                ),
+                            )
+                        }
                         Text("Home sets your default home app. Device opens Android settings.", style = MaterialTheme.typography.labelLarge, color = Steam.Steam)
                         CogRow {
                             CogButton("Home") { open(ctx, Intent(Settings.ACTION_HOME_SETTINGS)) }
@@ -544,6 +919,28 @@ fun LauncherRoot(tick: Int, homeSignal: Int) {
                     }
                 }
             }
+        }
+    }
+}
+
+@Composable
+private fun PresetRow(p: Preset, onDelete: (() -> Unit)?, onClick: () -> Unit) {
+    val shape = RoundedCornerShape(8.dp)
+    Row(
+        Modifier.fillMaxWidth().clip(shape)
+            .background(Steam.Soot.copy(alpha = 0.6f))
+            .border(1.dp, Steam.BrassDark, shape),
+        verticalAlignment = Alignment.CenterVertically,
+    ) {
+        Column(Modifier.weight(1f).clickable(onClick = onClick).padding(12.dp)) {
+            Text(p.name, style = MaterialTheme.typography.titleMedium, color = Steam.BrassLight)
+            Text(
+                "${p.items.size} widgets · " + (if (p.builtin) "Built in" else "Yours"),
+                style = MaterialTheme.typography.bodyMedium, color = Steam.Parchment,
+            )
+        }
+        if (onDelete != null) {
+            Text("✕", Modifier.clickable(onClick = onDelete).padding(14.dp), color = Steam.Copper, fontSize = 20.sp)
         }
     }
 }
@@ -608,6 +1005,21 @@ private fun HomeScreen(
                 board.areaH = maxHeight.value
                 board.ensureDefaults()
             }
+            if (editing && board.gridMode) {
+                Canvas(Modifier.fillMaxSize()) {
+                    val sx = board.stepX.dp.toPx()
+                    val sy = board.stepY.dp.toPx()
+                    val cw = board.cellW.dp.toPx()
+                    val ch = board.cellH.dp.toPx()
+                    for (r in 0 until board.maxRows) for (c in 0 until board.columns) {
+                        drawRoundRect(
+                            Steam.BrassLight.copy(alpha = 0.18f),
+                            topLeft = Offset(c * sx, r * sy), size = Size(cw, ch),
+                            cornerRadius = CornerRadius(8.dp.toPx()), style = Stroke(1.dp.toPx()),
+                        )
+                    }
+                }
+            }
             board.items.orEmpty().forEach { w ->
                 key(w.id) {
                     WidgetHost(w, board, editing) {
@@ -656,8 +1068,9 @@ private fun WidgetHost(w: WidgetItem, board: WidgetBoard, editing: Boolean, cont
                     .border(2.dp, Steam.BrassLight, shape)
                     .pointerInput(w.id) {
                         detectDragGestures(
-                            onDragEnd = { board.persist() },
-                            onDragCancel = { board.persist() },
+                            onDragStart = { board.begin(w.id) },
+                            onDragEnd = { board.settle(w.id, false) },
+                            onDragCancel = { board.settle(w.id, false) },
                         ) { change, drag ->
                             change.consume()
                             board.move(w.id, drag.x.toDp().value, drag.y.toDp().value)
@@ -673,8 +1086,9 @@ private fun WidgetHost(w: WidgetItem, board: WidgetBoard, editing: Boolean, cont
                 Modifier.align(Alignment.BottomEnd).size(44.dp)
                     .pointerInput(w.id) {
                         detectDragGestures(
-                            onDragEnd = { board.persist() },
-                            onDragCancel = { board.persist() },
+                            onDragStart = { board.begin(w.id) },
+                            onDragEnd = { board.settle(w.id, true) },
+                            onDragCancel = { board.settle(w.id, true) },
                         ) { change, drag ->
                             change.consume()
                             board.resize(w.id, drag.x.toDp().value, drag.y.toDp().value)
@@ -705,7 +1119,8 @@ private fun WidgetBody(
 ) {
     RivetedPanel(Modifier.fillMaxSize()) {
         when (w.type) {
-            WType.CLOCK -> ClockContent(now, is24)
+            WType.CLOCK -> NixieContent(now, is24)
+            WType.ANALOG -> ClockContent(now, is24)
             WType.DIGITAL -> DigitalContent(now, is24)
             WType.BOILER -> GaugeContent(battery, true, "Boiler pressure", "${(battery * 100).toInt()}% charged")
             WType.CARGO -> GaugeContent(storage.first, false, "Cargo hold", "${(storage.first * 100).toInt()}% full")
@@ -725,7 +1140,7 @@ private fun WidgetBody(
                 "Chief Engineer's picks",
                 apps.filter { (counts[it.packageName] ?: 0) > 0 }.sortedByDescending { counts[it.packageName] ?: 0 }.take(8),
                 "Open a few apps and I will learn which you favour.",
-                onLaunch, onLongPress,
+                onLaunch, onLongPress, iconSize = 60.dp,
             )
         }
     }
@@ -778,6 +1193,15 @@ private fun ClockContent(now: LocalDateTime, is24: Boolean) = BoxWithConstraints
             TimeLine(time, ampm, (mh.value * 0.14f).coerceIn(14f, 28f))
         }
     }
+}
+
+@Composable
+private fun NixieContent(now: LocalDateTime, is24: Boolean) {
+    val hour = if (is24) now.hour else (now.hour % 12).let { if (it == 0) 12 else it }
+    val hh = if (is24) hour.toString().padStart(2, '0') else hour.toString().padStart(2, ' ')
+    val mm = now.format(DateTimeFormatter.ofPattern("mm"))
+    val prefix = if (is24) "" else (if (now.hour < 12) "AM" else "PM") + "  ·  "
+    NixieClock(hh + mm, prefix + now.format(DateTimeFormatter.ofPattern("EEEE, d MMM")), Modifier.fillMaxSize())
 }
 
 @Composable
@@ -895,6 +1319,7 @@ private fun AppRowContent(
     empty: String,
     onLaunch: (AppInfo) -> Unit,
     onLongPress: (AppInfo) -> Unit,
+    iconSize: Dp = 48.dp,
 ) {
     Column(Modifier.fillMaxSize()) {
         Text(title, style = MaterialTheme.typography.titleMedium, color = Steam.BrassLight, fontSize = 14.sp, maxLines = 1)
@@ -909,7 +1334,7 @@ private fun AppRowContent(
             ) {
                 list.forEach { app ->
                     Porthole(
-                        app.icon, size = 48.dp,
+                        app.icon, size = iconSize,
                         modifier = Modifier.combinedClickable(onClick = { onLaunch(app) }, onLongClick = { onLongPress(app) }),
                     )
                 }
