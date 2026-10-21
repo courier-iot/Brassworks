@@ -2,7 +2,14 @@ package com.steampunk.brassworks
 
 import android.content.ClipData
 import android.content.ClipboardManager
+import android.Manifest
 import android.app.ActivityManager
+import android.hardware.Sensor
+import android.hardware.SensorEvent
+import android.hardware.SensorEventListener
+import android.hardware.SensorManager
+import android.location.Location
+import android.location.LocationManager
 import android.content.ComponentName
 import android.content.Context
 import android.content.Intent
@@ -22,7 +29,11 @@ import android.provider.Settings
 import android.text.format.DateFormat
 import android.widget.Toast
 import androidx.activity.compose.BackHandler
+import androidx.activity.compose.rememberLauncherForActivityResult
+import androidx.activity.result.contract.ActivityResultContracts
 import androidx.compose.animation.AnimatedVisibility
+import androidx.compose.animation.core.LinearEasing
+import androidx.compose.animation.core.animateFloatAsState
 import androidx.compose.animation.core.tween
 import androidx.compose.animation.fadeIn
 import androidx.compose.animation.fadeOut
@@ -53,10 +64,16 @@ import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.draw.clipToBounds
+import androidx.compose.ui.draw.rotate
 import androidx.compose.ui.geometry.CornerRadius
 import androidx.compose.ui.geometry.Offset
+import androidx.compose.ui.geometry.Rect
 import androidx.compose.ui.geometry.Size
 import androidx.compose.ui.graphics.drawscope.Stroke
+import androidx.compose.ui.graphics.drawscope.clipPath
+import androidx.compose.ui.graphics.Brush
+import androidx.compose.ui.graphics.Path
+import androidx.compose.ui.graphics.PathEffect
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.ImageBitmap
 import androidx.compose.ui.graphics.SolidColor
@@ -74,6 +91,7 @@ import androidx.compose.ui.unit.IntOffset
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import androidx.compose.ui.window.Dialog
+import androidx.core.content.ContextCompat
 import androidx.core.graphics.drawable.toBitmap
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.delay
@@ -86,11 +104,23 @@ import android.net.TrafficStats
 import android.os.SystemClock
 import kotlin.math.ln
 import java.time.LocalDateTime
+import java.time.LocalTime
+import java.time.ZoneId
 import java.time.YearMonth
 import java.time.format.DateTimeFormatter
 import java.time.format.TextStyle as JTextStyle
 import java.util.Locale
+import kotlin.math.PI
+import kotlin.math.abs
+import kotlin.math.acos
+import kotlin.math.asin
+import kotlin.math.atan2
+import kotlin.math.atan
 import kotlin.math.ceil
+import kotlin.math.cos
+import kotlin.math.floor
+import kotlin.math.sin
+import kotlin.math.tan
 import kotlin.math.roundToInt
 
 // ───────────────────────── Apps ─────────────────────────
@@ -353,6 +383,11 @@ enum class WType(
     BOILER("Boiler pressure", "Battery level on a dial gauge", 164f, 140f, 110f, 110f, "Recommended: your charge at a glance"),
     CARGO("Cargo hold", "Storage used and free", 164f, 140f, 110f, 110f, "Recommended: spot a full phone early"),
     ENGINE("Engine room", "RAM, battery heat and network flow on three dials", 340f, 140f, 200f, 110f, "Recommended: see what is loading the phone"),
+    COMPASS("Compass", "A brass compass card that turns as you do", 164f, 164f, 110f, 110f, "Recommended: a working compass, hold the phone flat"),
+    BAROMETER("Barometer", "Air pressure with a weather word", 164f, 140f, 110f, 110f, "Needs a pressure sensor, most phones have one"),
+    MOON("Moon phase", "Tonight's moon and the next full moon", 164f, 164f, 110f, 110f, "Recommended: no permissions needed"),
+    SUN("Solar phase", "Sunrise, sunset and the sun's path", 340f, 140f, 200f, 100f, "Asks for your rough location once"),
+    CHRONO("Chronometer", "Stopwatch with a lap. Keeps counting while you are away", 340f, 140f, 300f, 100f, "Recommended: a brass stopwatch"),
     ALMANAC("Almanac", "Month calendar with today marked", 340f, 280f, 200f, 200f, "Recommended: the month at a glance"),
     MEMO("Memorandum", "A notepad you can type in", 164f, 140f, 150f, 100f, "Recommended: jot things down fast"),
     SHELF("App shelf", "Apps you choose, one tap away", 340f, 130f, 110f, 100f, "Recommended: replaces the old dock"),
@@ -410,6 +445,10 @@ private val BUILTIN_PRESETS = listOf(
     Preset("Tinkerer", listOf(
         PresetItem(WType.CLOCK, 0, 0, 4, 2), PresetItem(WType.ENGINE, 0, 2, 4, 2),
         PresetItem(WType.BOILER, 0, 4, 2, 2), PresetItem(WType.CARGO, 2, 4, 2, 2),
+    ), true),
+    Preset("Navigator", listOf(
+        PresetItem(WType.CLOCK, 0, 0, 4, 2), PresetItem(WType.COMPASS, 0, 2, 2, 2),
+        PresetItem(WType.MOON, 2, 2, 2, 2), PresetItem(WType.SUN, 0, 4, 4, 2),
     ), true),
 )
 
@@ -699,7 +738,8 @@ class WidgetBoard(private val prefs: SharedPreferences) {
         items = items?.filter { it.id != id }
         folderNames.remove(id)
         folderApps.remove(id)
-        prefs.edit().remove("note_$id").remove("fname_$id").remove("fapps_$id").apply()
+        prefs.edit().remove("note_$id").remove("fname_$id").remove("fapps_$id").remove("chr_acc_$id").remove("chr_start_$id").remove("chr_lap_$id")
+            .remove("ch_run_$id").remove("ch_base_$id").remove("ch_acc_$id").remove("ch_lap_$id").apply()
         persist()
     }
 
@@ -799,7 +839,7 @@ class WidgetBoard(private val prefs: SharedPreferences) {
 // ───────────────────────── Root ─────────────────────────
 
 @Composable
-fun LauncherRoot(tick: Int, homeSignal: Int) {
+fun LauncherRoot(tick: Int, homeSignal: Int, active: Boolean = true) {
     val ctx = LocalContext.current
     val prefs = remember { ctx.getSharedPreferences("brassworks", Context.MODE_PRIVATE) }
     val board = remember { WidgetBoard(prefs) }
@@ -823,12 +863,13 @@ fun LauncherRoot(tick: Int, homeSignal: Int) {
     var saveDialog by remember { mutableStateOf(false) }
     var hiddenDialog by remember { mutableStateOf(false) }
     var importDialog by remember { mutableStateOf(false) }
+    var themeDialog by remember { mutableStateOf(false) }
     var hidden by remember { mutableStateOf(loadHidden(prefs)) }
 
     // Pressing the Home button closes everything and returns to the main screen.
     LaunchedEffect(homeSignal) {
         drawer = false; menuApp = null; settings = false; fabMenu = false; picker = false; editing = false
-        openFolder = null; menuFolder = null; folderPick = null; presetDialog = false; saveDialog = false; hiddenDialog = false; importDialog = false
+        openFolder = null; menuFolder = null; folderPick = null; presetDialog = false; saveDialog = false; hiddenDialog = false; importDialog = false; themeDialog = false
     }
     BackHandler(enabled = drawer || menuApp != null || settings || fabMenu || picker || editing || folderPick != null || openFolder != null) {
         when {
@@ -871,7 +912,7 @@ fun LauncherRoot(tick: Int, homeSignal: Int) {
         launchApp(ctx, app)
     }
 
-    CompositionLocalProvider(LocalAnimations provides animations) {
+    CompositionLocalProvider(LocalAnimations provides animations, LocalActive provides active) {
         Surface(Modifier.fillMaxSize(), color = Steam.Soot, contentColor = Steam.Parchment) {
             Box(Modifier.fillMaxSize()) {
                 HomeScreen(
@@ -968,11 +1009,12 @@ fun LauncherRoot(tick: Int, homeSignal: Int) {
                 RivetedPanel(Modifier.fillMaxWidth()) {
                     Column(Modifier.fillMaxWidth(), verticalArrangement = Arrangement.spacedBy(10.dp)) {
                         Text("THE WORKSHOP", style = MaterialTheme.typography.titleLarge, color = Steam.BrassLight)
-                        Text("Tap the gear to open the archive. Add places a widget, Arrange moves and resizes them, Presets saves and applies layouts.", style = MaterialTheme.typography.labelLarge, color = Steam.Steam)
+                        Text("Tap the gear to open the archive. Add places a widget, Arrange moves and resizes them, Presets saves and applies layouts, Theme changes the metal and gear speed.", style = MaterialTheme.typography.labelLarge, color = Steam.Steam)
                         CogRow {
                             CogButton("Add") { fabMenu = false; picker = true }
                             CogButton("Arrange") { fabMenu = false; editing = true }
                             CogButton("Presets") { fabMenu = false; presetDialog = true }
+                            CogButton("Theme") { fabMenu = false; themeDialog = true }
                             CogButton("Settings") { fabMenu = false; settings = true }
                             CogButton("Close") { fabMenu = false }
                         }
@@ -1099,6 +1141,28 @@ fun LauncherRoot(tick: Int, homeSignal: Int) {
                             CogButton("Import") { presetDialog = false; importDialog = true }
                             CogButton("Close") { presetDialog = false }
                         }
+                    }
+                }
+            }
+        }
+
+        // Theme and gear speed
+        if (themeDialog) {
+            Dialog(onDismissRequest = { themeDialog = false }) {
+                RivetedPanel(Modifier.fillMaxWidth()) {
+                    Column(Modifier.fillMaxWidth(), verticalArrangement = Arrangement.spacedBy(12.dp)) {
+                        Text("THEME", style = MaterialTheme.typography.titleLarge, color = Steam.BrassLight)
+                        Text("Pick a metal. The whole home screen changes at once.", style = MaterialTheme.typography.labelLarge, color = Steam.Steam)
+                        Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceEvenly) {
+                            Palettes.forEach { p -> ThemeSwatch(p, p === Steam.palette) { Steam.choose(ctx, p) } }
+                        }
+                        Text("Gear speed", style = MaterialTheme.typography.titleMedium, color = Steam.Parchment)
+                        Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                            SpeedChip("Slow", Steam.gearFactor == 1.8f, Modifier.weight(1f)) { Steam.setGear(ctx, 1.8f) }
+                            SpeedChip("Normal", Steam.gearFactor == 1f, Modifier.weight(1f)) { Steam.setGear(ctx, 1f) }
+                            SpeedChip("Fast", Steam.gearFactor == 0.5f, Modifier.weight(1f)) { Steam.setGear(ctx, 0.5f) }
+                        }
+                        CogRow { CogButton("Close") { themeDialog = false } }
                     }
                 }
             }
@@ -1265,6 +1329,38 @@ private fun HiddenRow(app: AppInfo, onOpen: () -> Unit, onShow: () -> Unit) {
             "Show", Modifier.clickable(onClick = onShow).padding(14.dp),
             color = Steam.Verdigris, fontFamily = FontFamily.Serif, fontWeight = FontWeight.Bold,
         )
+    }
+}
+
+@Composable
+private fun ThemeSwatch(p: Palette, selected: Boolean, onClick: () -> Unit) {
+    Column(Modifier.clickable(onClick = onClick).padding(4.dp), horizontalAlignment = Alignment.CenterHorizontally) {
+        Box(
+            Modifier.size(52.dp).clip(CircleShape)
+                .background(Brush.radialGradient(listOf(p.brassLight, p.brass, p.brassDark)))
+                .border(if (selected) 3.dp else 1.dp, if (selected) Steam.Parchment else p.brassDark, CircleShape),
+        )
+        Spacer(Modifier.height(4.dp))
+        Text(
+            p.name, fontSize = 12.sp, fontFamily = FontFamily.Serif,
+            fontWeight = if (selected) FontWeight.Bold else FontWeight.Normal,
+            color = if (selected) Steam.BrassLight else Steam.Steam,
+        )
+    }
+}
+
+@Composable
+private fun SpeedChip(label: String, selected: Boolean, modifier: Modifier, onClick: () -> Unit) {
+    val shape = RoundedCornerShape(8.dp)
+    Box(
+        modifier.clip(shape)
+            .background(if (selected) Steam.Brass else Steam.Soot.copy(alpha = 0.6f))
+            .border(1.dp, Steam.BrassDark, shape)
+            .clickable(onClick = onClick)
+            .padding(vertical = 10.dp),
+        contentAlignment = Alignment.Center,
+    ) {
+        Text(label, style = MaterialTheme.typography.titleMedium, color = if (selected) Steam.Ink else Steam.Parchment)
     }
 }
 
@@ -1472,6 +1568,11 @@ private fun WidgetBody(
             WType.BOILER -> GaugeContent(battery, true, "Boiler pressure", "${(battery * 100).toInt()}% charged")
             WType.CARGO -> GaugeContent(storage.first, false, "Cargo hold", "${(storage.first * 100).toInt()}% full")
             WType.ENGINE -> EngineRoomContent()
+            WType.COMPASS -> CompassContent()
+            WType.BAROMETER -> BarometerContent()
+            WType.MOON -> MoonContent(now)
+            WType.SUN -> SunContent(now, is24, prefs)
+            WType.CHRONO -> ChronoContent(w.id, prefs)
             WType.ALMANAC -> AlmanacContent(now)
             WType.MEMO -> MemoContent(w.id, prefs, editing)
             WType.SHELF -> AppRowContent(
@@ -1607,7 +1708,9 @@ private fun EngineRoomContent() = BoxWithConstraints(Modifier.fillMaxSize()) {
     var rx by remember { mutableLongStateOf(-1L) }    // bytes per second, -1 = unknown
     var tx by remember { mutableLongStateOf(-1L) }
 
-    LaunchedEffect(Unit) {
+    val active = LocalActive.current
+    LaunchedEffect(active) {
+        if (!active) return@LaunchedEffect
         val am = ctx.getSystemService(Context.ACTIVITY_SERVICE) as ActivityManager
         var lastRx = TrafficStats.getTotalRxBytes()
         var lastTx = TrafficStats.getTotalTxBytes()
@@ -1871,6 +1974,357 @@ private fun ChoiceRow(title: String, sub: String, onClick: () -> Unit) {
     ) {
         Text(title, style = MaterialTheme.typography.titleMedium, color = Steam.BrassLight)
         if (sub.isNotBlank()) Text(sub, style = MaterialTheme.typography.bodyMedium, color = Steam.Parchment)
+    }
+}
+
+// ───────────────────────── Extra widgets: compass, barometer, moon, sun, chronometer ─────────────────────────
+
+private const val SYNODIC = 29.530588853
+
+private fun cardinal(deg: Float): String =
+    listOf("N", "NE", "E", "SE", "S", "SW", "W", "NW")[(((deg + 22.5f) / 45f).toInt()) % 8]
+
+private fun weatherWord(hpa: Float): String = when {
+    hpa < 985f -> "Stormy"
+    hpa < 1000f -> "Rain"
+    hpa < 1015f -> "Change"
+    hpa < 1030f -> "Fair"
+    else -> "Very dry"
+}
+
+/** Days since the last new moon (an accurate-enough average, within about half a day). */
+private fun moonAge(now: LocalDateTime): Double {
+    val epoch = 947182440.0 // the new moon of 6 January 2000, 18:14 UTC
+    val t = now.atZone(ZoneId.systemDefault()).toEpochSecond().toDouble()
+    val days = (t - epoch) / 86400.0
+    return ((days % SYNODIC) + SYNODIC) % SYNODIC
+}
+
+private fun moonPhaseName(f: Double): String = when {
+    f < 0.03 || f > 0.97 -> "New Moon"
+    f < 0.22 -> "Waxing Crescent"
+    f < 0.28 -> "First Quarter"
+    f < 0.47 -> "Waxing Gibbous"
+    f < 0.53 -> "Full Moon"
+    f < 0.72 -> "Waning Gibbous"
+    f < 0.78 -> "Last Quarter"
+    else -> "Waning Crescent"
+}
+
+/** Sunrise or sunset in UTC hours (0 to 24) for a day of the year and a place, or null if the sun does not rise or set. */
+private fun sunEvent(dayOfYear: Int, lat: Double, lon: Double, rising: Boolean): Double? {
+    val rad = PI / 180.0
+    val lngHour = lon / 15.0
+    val t = dayOfYear + ((if (rising) 6.0 else 18.0) - lngHour) / 24.0
+    val m = 0.9856 * t - 3.289
+    var l = m + 1.916 * sin(m * rad) + 0.020 * sin(2.0 * m * rad) + 282.634
+    l = ((l % 360.0) + 360.0) % 360.0
+    var ra = atan(0.91764 * tan(l * rad)) / rad
+    ra = ((ra % 360.0) + 360.0) % 360.0
+    ra += floor(l / 90.0) * 90.0 - floor(ra / 90.0) * 90.0
+    ra /= 15.0
+    val sinDec = 0.39782 * sin(l * rad)
+    val cosDec = cos(asin(sinDec))
+    val cosH = (cos(90.833 * rad) - sinDec * sin(lat * rad)) / (cosDec * cos(lat * rad))
+    if (cosH > 1.0 || cosH < -1.0) return null
+    val h = (if (rising) 360.0 - acos(cosH) / rad else acos(cosH) / rad) / 15.0
+    val tt = h + ra - 0.06571 * t - 6.622
+    return (((tt - lngHour) % 24.0) + 24.0) % 24.0
+}
+
+private fun fmtHours(h: Double, is24: Boolean, suffix: Boolean = true): String {
+    val total = (h * 60.0).roundToInt() % 1440
+    val hh = total / 60
+    val mm = total % 60
+    if (is24) return "%02d:%02d".format(hh, mm)
+    val h12 = if (hh % 12 == 0) 12 else hh % 12
+    return "%d:%02d".format(h12, mm) + (if (suffix) (if (hh < 12) " AM" else " PM") else "")
+}
+
+private fun durationText(hours: Double): String {
+    val m = (hours * 60.0).roundToInt()
+    return if (m >= 60) "${m / 60}h ${m % 60}m" else "${m}m"
+}
+
+private fun chronoText(ms: Long): String {
+    val tenths = (ms / 100L) % 10L
+    val s = (ms / 1000L) % 60L
+    val m = (ms / 60000L) % 60L
+    val h = ms / 3600000L
+    return if (h > 0L) "%d:%02d:%02d".format(h, m, s) else "%02d:%02d.%d".format(m, s, tenths)
+}
+
+/** Last known rough location (needs the location permission). Remembers it so the widget keeps working. */
+private fun findLocation(ctx: Context, prefs: SharedPreferences, granted: Boolean): Pair<Double, Double>? {
+    if (granted) {
+        try {
+            val lm = ctx.getSystemService(Context.LOCATION_SERVICE) as LocationManager
+            var best: Location? = null
+            for (p in lm.getProviders(true)) {
+                val l = (try { lm.getLastKnownLocation(p) } catch (e: SecurityException) { null }) ?: continue
+                if (best == null || l.time > best.time) best = l
+            }
+            if (best != null) {
+                prefs.edit().putString("sun_lat", best.latitude.toString()).putString("sun_lon", best.longitude.toString()).apply()
+                return best.latitude to best.longitude
+            }
+        } catch (e: Exception) {
+            // fall through to the remembered place
+        }
+    }
+    val lat = prefs.getString("sun_lat", null)?.toDoubleOrNull()
+    val lon = prefs.getString("sun_lon", null)?.toDoubleOrNull()
+    return if (lat != null && lon != null) lat to lon else null
+}
+
+@Composable
+private fun WidgetNote(title: String, text: String, modifier: Modifier = Modifier) {
+    Column(modifier.fillMaxSize(), verticalArrangement = Arrangement.Center, horizontalAlignment = Alignment.CenterHorizontally) {
+        Text(title, fontSize = 14.sp, fontFamily = FontFamily.Serif, fontWeight = FontWeight.Bold, color = Steam.BrassLight, maxLines = 1)
+        Text(text, style = MaterialTheme.typography.labelLarge, color = Steam.Steam, textAlign = TextAlign.Center)
+    }
+}
+
+@Composable
+private fun CompassContent() = BoxWithConstraints(Modifier.fillMaxSize()) {
+    val ctx = LocalContext.current
+    val active = LocalActive.current
+    val mw = maxWidth
+    val mh = maxHeight
+    var heading by remember { mutableFloatStateOf(0f) }
+    var present by remember { mutableStateOf(true) }
+
+    DisposableEffect(active) {
+        val sm = ctx.getSystemService(Context.SENSOR_SERVICE) as SensorManager
+        val sensor = sm.getDefaultSensor(Sensor.TYPE_ROTATION_VECTOR)
+        if (sensor == null) {
+            present = false
+            onDispose { }
+        } else {
+            var sx = 0f
+            var sy = 1f
+            var first = true
+            val rot = FloatArray(9)
+            val ori = FloatArray(3)
+            val listener = object : SensorEventListener {
+                override fun onSensorChanged(e: SensorEvent) {
+                    SensorManager.getRotationMatrixFromVector(rot, e.values)
+                    SensorManager.getOrientation(rot, ori)
+                    val nx = sin(ori[0])
+                    val ny = cos(ori[0])
+                    if (first) {
+                        sx = nx; sy = ny; first = false
+                    } else {
+                        sx += 0.15f * (nx - sx)
+                        sy += 0.15f * (ny - sy)
+                    }
+                    heading = ((atan2(sx.toDouble(), sy.toDouble()) * 180.0 / PI).toFloat() + 360f) % 360f
+                }
+
+                override fun onAccuracyChanged(s: Sensor?, a: Int) {}
+            }
+            if (active) sm.registerListener(listener, sensor, SensorManager.SENSOR_DELAY_UI)
+            onDispose { sm.unregisterListener(listener) }
+        }
+    }
+
+    if (!present) {
+        WidgetNote("Compass", "No compass sensor on this phone.")
+    } else {
+        val dial = maxOf(minOf(mw, mh - 18.dp), 30.dp)
+        Column(Modifier.fillMaxSize(), horizontalAlignment = Alignment.CenterHorizontally, verticalArrangement = Arrangement.Center) {
+            CompassRose(heading, Modifier.size(dial))
+            Text(
+                "${heading.roundToInt() % 360}° ${cardinal(heading)}",
+                fontSize = 12.sp, fontFamily = FontFamily.Serif, color = Steam.Steam, maxLines = 1,
+            )
+        }
+    }
+}
+
+@Composable
+private fun BarometerContent() {
+    val ctx = LocalContext.current
+    val active = LocalActive.current
+    var hpa by remember { mutableFloatStateOf(0f) }
+    var present by remember { mutableStateOf(true) }
+
+    DisposableEffect(active) {
+        val sm = ctx.getSystemService(Context.SENSOR_SERVICE) as SensorManager
+        val sensor = sm.getDefaultSensor(Sensor.TYPE_PRESSURE)
+        if (sensor == null) {
+            present = false
+            onDispose { }
+        } else {
+            val listener = object : SensorEventListener {
+                override fun onSensorChanged(e: SensorEvent) { hpa = e.values[0] }
+                override fun onAccuracyChanged(s: Sensor?, a: Int) {}
+            }
+            if (active) sm.registerListener(listener, sensor, SensorManager.SENSOR_DELAY_NORMAL)
+            onDispose { sm.unregisterListener(listener) }
+        }
+    }
+
+    if (!present) {
+        GaugeContent(0f, true, "Barometer", "no sensor")
+    } else {
+        GaugeContent(
+            ((hpa - 950f) / 100f).coerceIn(0f, 1f), true, "Barometer",
+            if (hpa <= 0f) "reading..." else "${hpa.roundToInt()} hPa · ${weatherWord(hpa)}",
+        )
+    }
+}
+
+@Composable
+private fun MoonContent(now: LocalDateTime) = BoxWithConstraints(Modifier.fillMaxSize()) {
+    val mw = maxWidth
+    val mh = maxHeight
+    val age = moonAge(now)
+    val f = age / SYNODIC
+    val lit = ((1.0 - cos(2.0 * PI * f)) / 2.0 * 100.0).roundToInt()
+    val name = moonPhaseName(f)
+    val toNext = if (f < 0.5) SYNODIC / 2.0 - age else SYNODIC - age
+    val next = (if (f < 0.5) "Full moon" else "New moon") + " in " + ceil(toNext).toInt() + " d"
+    if (mw > mh * 1.4f) {
+        Row(Modifier.fillMaxSize(), verticalAlignment = Alignment.CenterVertically) {
+            MoonDisc(age, Modifier.size(minOf(mh, mw * 0.4f)))
+            Spacer(Modifier.width(12.dp))
+            Column(Modifier.weight(1f)) {
+                Text(name, style = MaterialTheme.typography.titleMedium, color = Steam.BrassLight, maxLines = 1)
+                Text("$lit% lit", style = MaterialTheme.typography.bodyMedium, color = Steam.Parchment)
+                Text(next, style = MaterialTheme.typography.bodyMedium, color = Steam.Parchment)
+            }
+        }
+    } else {
+        Column(Modifier.fillMaxSize(), horizontalAlignment = Alignment.CenterHorizontally, verticalArrangement = Arrangement.Center) {
+            MoonDisc(age, Modifier.size(minOf(mw, mh * 0.62f)))
+            Spacer(Modifier.height(2.dp))
+            Text(name, fontSize = 13.sp, fontFamily = FontFamily.Serif, fontWeight = FontWeight.Bold, color = Steam.BrassLight, maxLines = 1)
+            Text("$lit% lit", fontSize = 11.sp, fontFamily = FontFamily.Serif, color = Steam.Steam, maxLines = 1)
+        }
+    }
+}
+
+@Composable
+private fun SunContent(now: LocalDateTime, is24: Boolean, prefs: SharedPreferences) = BoxWithConstraints(Modifier.fillMaxSize()) {
+    val ctx = LocalContext.current
+    val mh = maxHeight
+    val wide = maxWidth > maxHeight * 1.3f
+    var granted by remember {
+        mutableStateOf(ctx.checkSelfPermission(Manifest.permission.ACCESS_COARSE_LOCATION) == PackageManager.PERMISSION_GRANTED)
+    }
+    val ask = rememberLauncherForActivityResult(ActivityResultContracts.RequestPermission()) { ok -> granted = ok }
+    var retry by remember { mutableIntStateOf(0) }
+    val loc = remember(granted, retry) { findLocation(ctx, prefs, granted) }
+
+    if (loc == null) {
+        WidgetNote(
+            "Solar phase",
+            if (!granted) "Tap to share your rough location once. It stays on this phone."
+            else "No location yet. Open a maps app once, then tap here to try again.",
+            Modifier.clickable {
+                if (!granted) ask.launch(Manifest.permission.ACCESS_COARSE_LOCATION) else retry++
+            },
+        )
+    } else {
+        val offH = ZoneId.systemDefault().rules.getOffset(java.time.Instant.now()).totalSeconds / 3600.0
+        val riseUt = sunEvent(now.dayOfYear, loc.first, loc.second, true)
+        val setUt = sunEvent(now.dayOfYear, loc.first, loc.second, false)
+        if (riseUt == null || setUt == null) {
+            WidgetNote("Solar phase", "At this latitude the sun does not rise or set today.")
+        } else {
+            val rise = ((riseUt + offH) % 24.0 + 24.0) % 24.0
+            val setH = ((setUt + offH) % 24.0 + 24.0) % 24.0
+            val dayLen = ((setH - rise) + 24.0) % 24.0
+            val nowH = now.hour + now.minute / 60.0
+            val since = ((nowH - rise) + 24.0) % 24.0
+            val up = dayLen > 0.0 && since <= dayLen
+            val progress = if (up) (since / dayLen).toFloat() else null
+            val status = if (up) "Sets in " + durationText(dayLen - since) else "Rises in " + durationText(((rise - nowH) + 24.0) % 24.0)
+            val times = "↑ " + fmtHours(rise, is24, false) + "   ↓ " + fmtHours(setH, is24, false)
+            if (wide) {
+                Row(Modifier.fillMaxSize(), verticalAlignment = Alignment.CenterVertically) {
+                    SunArc(progress, Modifier.weight(1f).fillMaxHeight())
+                    Spacer(Modifier.width(10.dp))
+                    Column(Modifier.weight(1f)) {
+                        Text("Solar phase", style = MaterialTheme.typography.titleMedium, color = Steam.BrassLight, maxLines = 1)
+                        Text(times, style = MaterialTheme.typography.bodyMedium, color = Steam.Parchment, maxLines = 1)
+                        Text("Day " + durationText(dayLen), style = MaterialTheme.typography.bodyMedium, color = Steam.Parchment, maxLines = 1)
+                        Text(status, style = MaterialTheme.typography.bodyMedium, color = Steam.Steam, maxLines = 1)
+                    }
+                }
+            } else {
+                Column(Modifier.fillMaxSize(), horizontalAlignment = Alignment.CenterHorizontally, verticalArrangement = Arrangement.Center) {
+                    SunArc(progress, Modifier.fillMaxWidth().height(mh * 0.5f))
+                    Text(times, fontSize = 12.sp, fontFamily = FontFamily.Serif, color = Steam.Parchment, maxLines = 1)
+                    Text(status, fontSize = 11.sp, fontFamily = FontFamily.Serif, color = Steam.Steam, maxLines = 1)
+                }
+            }
+        }
+    }
+}
+
+@Composable
+private fun ChronoContent(id: Long, prefs: SharedPreferences) = BoxWithConstraints(Modifier.fillMaxSize()) {
+    val active = LocalActive.current
+    val mw = maxWidth
+    val mh = maxHeight
+    var acc by remember(id) { mutableLongStateOf(prefs.getLong("chr_acc_$id", 0L)) }
+    var started by remember(id) { mutableLongStateOf(prefs.getLong("chr_start_$id", 0L)) }
+    var lap by remember(id) { mutableLongStateOf(prefs.getLong("chr_lap_$id", 0L)) }
+    var nowMs by remember { mutableLongStateOf(System.currentTimeMillis()) }
+
+    // Tick quickly while running and on screen. The time itself comes from the clock, so it never drifts.
+    LaunchedEffect(started, active) {
+        nowMs = System.currentTimeMillis()
+        while (started != 0L && active) {
+            delay(50)
+            nowMs = System.currentTimeMillis()
+        }
+    }
+
+    val elapsed = acc + (if (started != 0L) maxOf(0L, nowMs - started) else 0L)
+    fun save() {
+        prefs.edit().putLong("chr_acc_$id", acc).putLong("chr_start_$id", started).putLong("chr_lap_$id", lap).apply()
+    }
+
+    val dial = minOf(mh, mw * 0.3f)
+    val textW = mw - dial - 12.dp
+    val fs = minOf(textW.value * 0.15f, mh.value * 0.28f).coerceIn(16f, 34f)
+    Row(Modifier.fillMaxSize(), verticalAlignment = Alignment.CenterVertically) {
+        AnalogClock(((elapsed / 60000L) % 60L) / 5f, (elapsed % 60000L) / 1000f, Modifier.size(dial))
+        Spacer(Modifier.width(12.dp))
+        Column(Modifier.weight(1f), horizontalAlignment = Alignment.CenterHorizontally) {
+            Text(
+                chronoText(elapsed), fontSize = fs.sp, fontFamily = FontFamily.Monospace,
+                fontWeight = FontWeight.Bold, color = Steam.BrassLight, maxLines = 1,
+            )
+            Row(horizontalArrangement = Arrangement.spacedBy(4.dp)) {
+                CogButton(if (started != 0L) "Stop" else "Start", diameter = 50.dp) {
+                    val t = System.currentTimeMillis()
+                    if (started != 0L) {
+                        acc += t - started
+                        started = 0L
+                    } else {
+                        started = t
+                    }
+                    save()
+                }
+                CogButton("Lap", diameter = 50.dp, enabled = elapsed > 0L) {
+                    lap = elapsed
+                    save()
+                }
+                CogButton("Reset", diameter = 50.dp) {
+                    acc = 0L
+                    started = 0L
+                    lap = 0L
+                    save()
+                }
+            }
+            if (lap > 0L) {
+                Text("Lap " + chronoText(lap), fontSize = 11.sp, fontFamily = FontFamily.Serif, color = Steam.Steam, maxLines = 1)
+            }
+        }
     }
 }
 

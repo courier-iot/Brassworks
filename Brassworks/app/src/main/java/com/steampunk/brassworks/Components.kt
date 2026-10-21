@@ -25,9 +25,12 @@ import androidx.compose.ui.draw.clip
 import androidx.compose.ui.draw.drawBehind
 import androidx.compose.ui.draw.shadow
 import androidx.compose.ui.geometry.Offset
+import androidx.compose.ui.geometry.Rect
 import androidx.compose.ui.geometry.Size
 import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.graphics.Path
+import androidx.compose.ui.graphics.PathEffect
 import androidx.compose.ui.graphics.Shadow
 import androidx.compose.ui.graphics.ImageBitmap
 import androidx.compose.ui.graphics.StrokeCap
@@ -36,7 +39,9 @@ import androidx.compose.ui.hapticfeedback.HapticFeedbackType
 import androidx.compose.ui.platform.LocalHapticFeedback
 import androidx.compose.ui.graphics.drawscope.DrawScope
 import androidx.compose.ui.graphics.drawscope.Stroke
+import androidx.compose.ui.graphics.drawscope.clipPath
 import androidx.compose.ui.graphics.drawscope.rotate
+import androidx.compose.ui.graphics.drawscope.scale
 import androidx.compose.ui.unit.Dp
 import androidx.compose.ui.platform.LocalDensity
 import androidx.compose.ui.text.TextStyle
@@ -44,6 +49,7 @@ import androidx.compose.ui.text.font.FontFamily
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
+import kotlin.math.abs
 import kotlin.math.cos
 import kotlin.math.sin
 
@@ -66,7 +72,7 @@ fun Gear(
         val a by t.animateFloat(
             initialValue = 0f,
             targetValue = if (reverse) -360f else 360f,
-            animationSpec = infiniteRepeatable(tween((speed * 1000).toInt(), easing = LinearEasing)),
+            animationSpec = infiniteRepeatable(tween((speed * 1000f * Steam.gearFactor).toInt(), easing = LinearEasing)),
             label = "rot",
         )
         a
@@ -419,3 +425,112 @@ fun NixieClock(hhmm: String, date: String?, modifier: Modifier = Modifier) =
             }
         }
     }
+
+
+// ───────────────────────── Compass, moon and sun drawings ─────────────────────────
+
+/** Brass compass. The card turns so your heading (degrees, 0 = north) sits at the top. */
+@Composable
+fun CompassRose(heading: Float, modifier: Modifier = Modifier) = BoxWithConstraints(modifier.aspectRatio(1f)) {
+    val d = minOf(maxWidth, maxHeight)
+    val fs = with(LocalDensity.current) { (d * 0.12f).toSp() }
+    val inset = d * 0.15f
+    Canvas(Modifier.fillMaxSize()) {
+        val c = center
+        val r = size.minDimension / 2f
+        drawCircle(Brush.radialGradient(listOf(Steam.BrassLight, Steam.BrassDark), center = c, radius = r), r, c)
+        drawCircle(Steam.Parchment, r * 0.88f, c)
+    }
+    Box(Modifier.fillMaxSize().graphicsLayer { rotationZ = -heading }) {
+        Canvas(Modifier.fillMaxSize()) {
+            val c = center
+            val r = size.minDimension / 2f
+            for (i in 0 until 36) {
+                val major = i % 3 == 0
+                val deg = i * 10.0 - 90.0
+                drawLine(Steam.Ink, polar(c, r * (if (major) 0.78f else 0.81f), deg), polar(c, r * 0.85f, deg), strokeWidth = if (major) 4f else 2f)
+            }
+            val north = Path().apply {
+                moveTo(c.x, c.y - r * 0.40f); lineTo(c.x - r * 0.09f, c.y); lineTo(c.x + r * 0.09f, c.y); close()
+            }
+            val south = Path().apply {
+                moveTo(c.x, c.y + r * 0.40f); lineTo(c.x - r * 0.09f, c.y); lineTo(c.x + r * 0.09f, c.y); close()
+            }
+            drawPath(north, Steam.Copper)
+            drawPath(south, Steam.Ink)
+            drawCircle(Steam.BrassDark, r * 0.06f, c)
+            drawCircle(Steam.BrassLight, r * 0.025f, c)
+        }
+        Text("N", Modifier.align(Alignment.TopCenter).padding(top = inset), fontSize = fs, fontFamily = FontFamily.Serif, fontWeight = FontWeight.Bold, color = Steam.Copper)
+        Text("E", Modifier.align(Alignment.CenterEnd).padding(end = inset), fontSize = fs, fontFamily = FontFamily.Serif, fontWeight = FontWeight.Bold, color = Steam.Ink)
+        Text("S", Modifier.align(Alignment.BottomCenter).padding(bottom = inset), fontSize = fs, fontFamily = FontFamily.Serif, fontWeight = FontWeight.Bold, color = Steam.Ink)
+        Text("W", Modifier.align(Alignment.CenterStart).padding(start = inset), fontSize = fs, fontFamily = FontFamily.Serif, fontWeight = FontWeight.Bold, color = Steam.Ink)
+    }
+    Canvas(Modifier.fillMaxSize()) {
+        val c = center
+        val r = size.minDimension / 2f
+        val mark = Path().apply {
+            moveTo(c.x, c.y - r * 0.80f); lineTo(c.x - r * 0.06f, c.y - r * 0.93f); lineTo(c.x + r * 0.06f, c.y - r * 0.93f); close()
+        }
+        drawPath(mark, Steam.Copper)
+    }
+}
+
+/** The moon as it looks tonight. ageDays is days since the new moon (0 to 29.53). */
+@Composable
+fun MoonDisc(ageDays: Double, modifier: Modifier = Modifier) {
+    Canvas(modifier.aspectRatio(1f)) {
+        val c = center
+        val r = size.minDimension / 2f
+        val mr = r * 0.88f
+        val f = (ageDays / 29.530588853).toFloat().coerceIn(0f, 1f)
+        drawCircle(Brush.radialGradient(listOf(Steam.BrassLight, Steam.BrassDark), center = c, radius = r), r, c)
+        drawCircle(Color(0xFF232733), mr, c) // the dark side
+        val waxing = f <= 0.5f
+        val q = if (waxing) f else 1f - f // 0 = new, 0.5 = full
+        val k = cos(2.0 * Math.PI * q).toFloat() // 1 = new ... -1 = full
+        val rx = maxOf(abs(k) * mr, 0.5f)
+        val lit = Path().apply {
+            arcTo(Rect(c.x - mr, c.y - mr, c.x + mr, c.y + mr), -90f, 180f, true)
+            arcTo(Rect(c.x - rx, c.y - mr, c.x + rx, c.y + mr), 90f, if (k > 0f) -180f else 180f, false)
+            close()
+        }
+        scale(if (waxing) 1f else -1f, 1f, c) {
+            clipPath(lit) {
+                drawCircle(
+                    Brush.radialGradient(listOf(Color(0xFFF5EFD6), Color(0xFFD9CFA8)), center = Offset(c.x - mr * 0.2f, c.y - mr * 0.2f), radius = mr * 1.4f),
+                    mr, c,
+                )
+                val craters = listOf(
+                    Triple(-0.30f, -0.25f, 0.16f), Triple(0.25f, -0.35f, 0.10f), Triple(0.10f, 0.20f, 0.20f),
+                    Triple(-0.35f, 0.35f, 0.09f), Triple(0.45f, 0.30f, 0.07f),
+                )
+                for ((dx, dy, rr) in craters) drawCircle(Color(0x22604020), mr * rr, Offset(c.x + mr * dx, c.y + mr * dy))
+            }
+        }
+    }
+}
+
+/** The sun's path across the sky. progress is 0 at sunrise to 1 at sunset, or null at night. */
+@Composable
+fun SunArc(progress: Float?, modifier: Modifier = Modifier) {
+    Canvas(modifier) {
+        val w = size.width
+        val h = size.height
+        val baseY = h * 0.82f
+        val rad = minOf(w * 0.42f, baseY - 6f)
+        val cx = w / 2f
+        drawLine(Steam.BrassDark, Offset(cx - rad - 10f, baseY), Offset(cx + rad + 10f, baseY), strokeWidth = 3f, cap = StrokeCap.Round)
+        drawArc(
+            Steam.Brass, 180f, 180f, false, Offset(cx - rad, baseY - rad), Size(rad * 2f, rad * 2f),
+            style = Stroke(3f, pathEffect = PathEffect.dashPathEffect(floatArrayOf(10f, 8f))),
+        )
+        if (progress != null) {
+            val th = Math.PI * (1.0 - progress)
+            val sx = cx + rad * cos(th).toFloat()
+            val sy = baseY - rad * sin(th).toFloat()
+            drawCircle(Steam.BrassLight.copy(alpha = 0.30f), 16f, Offset(sx, sy))
+            drawCircle(Steam.BrassLight, 9f, Offset(sx, sy))
+        }
+    }
+}
