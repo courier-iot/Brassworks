@@ -28,6 +28,7 @@ import androidx.compose.ui.text.font.Font
 import androidx.compose.ui.text.font.FontFamily
 import androidx.compose.ui.text.font.FontStyle
 import androidx.compose.ui.text.font.FontWeight
+import androidx.compose.ui.unit.em
 import androidx.compose.ui.unit.sp
 import java.io.File
 
@@ -285,13 +286,15 @@ val LocalActive = compositionLocalOf { true }
 
 private fun steamTypography(font: FontFamily): Typography {
     val base = Typography()
+    // Line heights are relative (em) so they shrink with the text. A fixed 24sp line used to inflate
+    // every small label and get it clipped at the bottom of a widget.
     return Typography(
-        headlineMedium = base.headlineMedium.copy(fontFamily = font, fontWeight = FontWeight.Bold, fontSize = 26.sp, letterSpacing = 1.5.sp),
-        titleLarge = base.titleLarge.copy(fontFamily = font, fontWeight = FontWeight.Bold),
-        titleMedium = base.titleMedium.copy(fontFamily = font, fontWeight = FontWeight.Bold, fontSize = 17.sp),
-        bodyLarge = base.bodyLarge.copy(fontFamily = font, fontSize = 17.sp, lineHeight = 24.sp),
-        bodyMedium = base.bodyMedium.copy(fontFamily = font, lineHeight = 21.sp),
-        labelLarge = base.labelLarge.copy(fontFamily = font, fontWeight = FontWeight.Medium),
+        headlineMedium = base.headlineMedium.copy(fontFamily = font, fontWeight = FontWeight.Bold, fontSize = 26.sp, letterSpacing = 1.5.sp, lineHeight = 1.2.em),
+        titleLarge = base.titleLarge.copy(fontFamily = font, fontWeight = FontWeight.Bold, lineHeight = 1.2.em),
+        titleMedium = base.titleMedium.copy(fontFamily = font, fontWeight = FontWeight.Bold, fontSize = 17.sp, lineHeight = 1.25.em),
+        bodyLarge = base.bodyLarge.copy(fontFamily = font, fontSize = 17.sp, lineHeight = 1.3.em),
+        bodyMedium = base.bodyMedium.copy(fontFamily = font, lineHeight = 1.3.em),
+        labelLarge = base.labelLarge.copy(fontFamily = font, fontWeight = FontWeight.Medium, lineHeight = 1.25.em),
     )
 }
 

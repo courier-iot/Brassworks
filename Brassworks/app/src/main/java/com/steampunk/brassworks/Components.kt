@@ -17,7 +17,11 @@ import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.getValue
+import androidx.compose.runtime.LaunchedEffect
+import androidx.compose.runtime.mutableFloatStateOf
 import androidx.compose.runtime.remember
+import androidx.compose.runtime.rememberUpdatedState
+import androidx.compose.runtime.withFrameNanos
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.alpha
@@ -68,22 +72,31 @@ fun Gear(
     reverse: Boolean = false,
     animate: Boolean = LocalAnimations.current,
 ) {
-    val angle = if (animate) {
-        val t = rememberInfiniteTransition(label = "gear")
-        val a by t.animateFloat(
-            initialValue = 0f,
-            targetValue = if (reverse) -360f else 360f,
-            animationSpec = infiniteRepeatable(tween((speed * 1000f * Steam.gearFactor).toInt(), easing = LinearEasing)),
-            label = "rot",
-        )
-        a
-    } else 0f
+    // Driven frame by frame so changing the gear speed takes effect immediately
+    // (an infinite transition ignores a changed duration while it is running).
+    val angle = remember { mutableFloatStateOf(0f) }
+    val periodSecs by rememberUpdatedState(speed)
+    val dir by rememberUpdatedState(if (reverse) -1f else 1f)
+    if (animate) {
+        LaunchedEffect(Unit) {
+            var last = 0L
+            while (true) {
+                withFrameNanos { now ->
+                    if (last != 0L) {
+                        val turns = (now - last) / 1_000_000_000f / (periodSecs * Steam.gearFactor)
+                        angle.floatValue = (angle.floatValue + dir * turns * 360f) % 360f
+                    }
+                    last = now
+                }
+            }
+        }
+    }
 
     Canvas(modifier) {
         val c = center
         val r = size.minDimension / 2f
         val brush = Brush.radialGradient(listOf(Steam.BrassLight, Steam.Brass, Steam.BrassDark), center = c, radius = r)
-        rotate(angle, c) {
+        rotate(angle.floatValue, c) {
             val toothW = (2f * Math.PI.toFloat() * r * 0.8f / teeth) * 0.5f
             for (i in 0 until teeth) {
                 rotate(i * 360f / teeth, c) {
@@ -416,7 +429,7 @@ fun NixieClock(hhmm: String, date: String?, modifier: Modifier = Modifier) =
         val mw = maxWidth
         val mh = maxHeight
         val gap = 4.dp
-        val dateH = if (date != null && mh > 80.dp) 22.dp else 0.dp
+        val dateH = if (date != null && mh > 80.dp) 30.dp else 0.dp
         val th = maxOf(minOf(mh - dateH, (mw - gap * 4) / 2.64f), 20.dp)
         val tw = th * 0.56f
         Column(Modifier.fillMaxSize(), horizontalAlignment = Alignment.CenterHorizontally, verticalArrangement = Arrangement.Center) {
@@ -428,7 +441,7 @@ fun NixieClock(hhmm: String, date: String?, modifier: Modifier = Modifier) =
                 NixieTube(hhmm[3], tw, th)
             }
             if (dateH > 0.dp && date != null) {
-                Text(date, fontSize = 13.sp, fontFamily = Steam.font, color = Steam.Parchment, maxLines = 1, modifier = Modifier.padding(top = 4.dp))
+                Text(date, fontSize = 13.sp, fontFamily = Steam.font, color = Steam.Parchment, maxLines = 1, modifier = Modifier.padding(top = 4.dp).wrapContentHeight(Alignment.Top, unbounded = true))
             }
         }
     }

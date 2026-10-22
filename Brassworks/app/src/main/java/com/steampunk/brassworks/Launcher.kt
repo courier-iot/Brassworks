@@ -18,7 +18,10 @@ import android.content.SharedPreferences
 import android.content.pm.LauncherApps
 import android.content.pm.PackageManager
 import android.content.pm.ShortcutInfo
+import android.content.res.Configuration
 import android.net.Uri
+import android.view.View
+import android.view.inputmethod.InputMethodManager
 import android.util.Base64
 import android.os.BatteryManager
 import android.os.Environment
@@ -44,6 +47,7 @@ import androidx.compose.foundation.ExperimentalFoundationApi
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
 import androidx.compose.foundation.clickable
+import androidx.compose.foundation.interaction.MutableInteractionSource
 import androidx.compose.foundation.combinedClickable
 import androidx.compose.foundation.gestures.detectDragGestures
 import androidx.compose.foundation.gestures.detectTapGestures
@@ -79,14 +83,25 @@ import androidx.compose.ui.graphics.ImageBitmap
 import androidx.compose.ui.graphics.SolidColor
 import androidx.compose.ui.graphics.asImageBitmap
 import androidx.compose.ui.input.pointer.pointerInput
+import androidx.compose.ui.focus.FocusManager
+import androidx.compose.ui.focus.FocusRequester
+import androidx.compose.ui.focus.focusProperties
+import androidx.compose.ui.focus.focusRequester
+import androidx.compose.ui.focus.onFocusChanged
+import androidx.compose.ui.platform.LocalConfiguration
 import androidx.compose.ui.platform.LocalContext
+import androidx.compose.ui.platform.LocalFocusManager
+import androidx.compose.ui.platform.LocalView
 import androidx.compose.ui.text.TextStyle
 import androidx.compose.ui.text.font.FontFamily
+import androidx.compose.ui.text.font.FontStyle
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.input.ImeAction
 import androidx.compose.ui.text.style.TextAlign
+import androidx.compose.ui.text.style.TextDecoration
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.Dp
+import androidx.compose.ui.unit.TextUnit
 import androidx.compose.ui.unit.IntOffset
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
@@ -124,6 +139,46 @@ import kotlin.math.tan
 import kotlin.math.roundToInt
 
 // ───────────────────────── Apps ─────────────────────────
+
+/**
+ * Same as the Material Text, except it is never cut off at the bottom. Text inside a widget gets
+ * measured with whatever height is left over, and fonts with taller line spacing used to be clipped.
+ */
+@Composable
+private fun Text(
+    text: String,
+    modifier: Modifier = Modifier,
+    color: Color = Color.Unspecified,
+    fontSize: TextUnit = TextUnit.Unspecified,
+    fontStyle: FontStyle? = null,
+    fontWeight: FontWeight? = null,
+    fontFamily: FontFamily? = null,
+    letterSpacing: TextUnit = TextUnit.Unspecified,
+    textDecoration: TextDecoration? = null,
+    textAlign: TextAlign? = null,
+    lineHeight: TextUnit = TextUnit.Unspecified,
+    overflow: TextOverflow = TextOverflow.Clip,
+    softWrap: Boolean = true,
+    maxLines: Int = Int.MAX_VALUE,
+    style: TextStyle = LocalTextStyle.current,
+) {
+    androidx.compose.material3.Text(
+        text = text,
+        modifier = modifier.wrapContentHeight(Alignment.Top, unbounded = true),
+        color = color, fontSize = fontSize, fontStyle = fontStyle, fontWeight = fontWeight, fontFamily = fontFamily,
+        letterSpacing = letterSpacing, textDecoration = textDecoration, textAlign = textAlign, lineHeight = lineHeight,
+        overflow = overflow, softWrap = softWrap, maxLines = maxLines, style = style,
+    )
+}
+
+/** Takes the cursor out of any text box and puts the keyboard away. */
+private fun dropFocus(ctx: Context, view: View, focus: FocusManager) {
+    focus.clearFocus()
+    try {
+        (ctx.getSystemService(Context.INPUT_METHOD_SERVICE) as InputMethodManager).hideSoftInputFromWindow(view.windowToken, 0)
+    } catch (e: Exception) {
+    }
+}
 
 data class AppInfo(
     val label: String,
@@ -485,8 +540,20 @@ private fun decodePresets(s: String?): List<Preset> {
 }
 
 /** Holds every widget's position and size (in dp), the grid rules, folders and presets. */
-class WidgetBoard(private val prefs: SharedPreferences) {
-    var items by mutableStateOf(decode(prefs.getString("widgets_v1", null)))
+class WidgetBoard(private val prefs: SharedPreferences, land: Boolean = false) {
+    /** Portrait and landscape each keep their own layout, so rotating never piles the widgets up. */
+    private var landscape = land
+    private var reflow = false // this orientation has no layout of its own yet
+    private fun layoutKey(l: Boolean) = if (l) "widgets_land" else "widgets_v1"
+    private fun loadFor(l: Boolean): List<WidgetItem>? {
+        val own = decode(prefs.getString(layoutKey(l), null))
+        if (own != null) return own
+        val other = decode(prefs.getString(layoutKey(!l), null))
+        if (other != null) reflow = true
+        return other
+    }
+
+    var items by mutableStateOf(loadFor(land))
     var areaW by mutableFloatStateOf(0f)
     var areaH by mutableFloatStateOf(0f)
 
@@ -536,7 +603,7 @@ class WidgetBoard(private val prefs: SharedPreferences) {
 
     // ----- grid maths -----
 
-    private val gridCols = 4
+    private val gridCols: Int get() = if (areaW > 0f) maxOf(4, ((areaW + gap) / 94f).toInt()) else 4
     private val gap = 8f
     val columns: Int get() = gridCols
     val cellW: Float get() = if (areaW > 0f) (areaW - gap * (gridCols - 1)) / gridCols else 80f
@@ -630,11 +697,56 @@ class WidgetBoard(private val prefs: SharedPreferences) {
         }
     }
 
+    /**
+     * The other orientation keeps its own arrangement, but gets the same widgets: anything you added
+     * is placed in a free spot, and anything you removed is taken out.
+     */
+    private fun syncWith(own: List<WidgetItem>, source: List<WidgetItem>): List<WidgetItem> {
+        val ids = source.map { it.id }.toSet()
+        val keep = own.filter { it.id in ids }
+        val missing = source.filter { m -> own.none { it.id == m.id } }
+        if (missing.isEmpty() && keep.size == own.size) return own
+        val occ = newOcc()
+        markAll(occ, keep)
+        val added = mutableListOf<WidgetItem>()
+        for (m in missing) {
+            var c = maxOf(colsOf(m.w), minColsOf(m.type))
+            var r = maxOf(rowsOf(m.h), minRowsOf(m.type))
+            var spot = occ.findSpot(c, r, 0, 0)
+            if (spot == null) {
+                c = minColsOf(m.type)
+                r = minRowsOf(m.type)
+                spot = occ.findSpot(c, r, 0, 0)
+            }
+            if (spot != null) {
+                occ.mark(spot.first, spot.second, c, r)
+                added += place(m, spot.first, spot.second, c, r)
+            }
+        }
+        return keep + added
+    }
+
     // ----- first run / defaults -----
 
-    fun ensureDefaults() {
-        if (areaW <= 0f) return
+    fun ensureDefaults(land: Boolean) {
+        if (areaW <= 0f || areaH <= 0f) return
         val cur = items
+        if (cur != null && land != landscape) {
+            // the phone was turned: keep this layout for its own orientation and switch to the other one
+            persist()
+            landscape = land
+            reflow = false
+            val own = decode(prefs.getString(layoutKey(land), null))
+            items = if (own == null) tidyList(cur, false) else syncWith(own, cur)
+            persist()
+            return
+        }
+        if (cur != null && reflow) {
+            reflow = false
+            items = tidyList(cur, false)
+            persist()
+            return
+        }
         if (cur == null) {
             items = tidyList(instantiate(BUILTIN_PRESETS[0], emptyList()), true)
             prefs.edit().putBoolean("grid_done", true).apply()
@@ -744,7 +856,7 @@ class WidgetBoard(private val prefs: SharedPreferences) {
     }
 
     fun persist() {
-        items?.let { prefs.edit().putString("widgets_v1", encode(it)).apply() }
+        items?.let { prefs.edit().putString(layoutKey(landscape), encode(it)).apply() }
     }
 
     // ----- presets -----
@@ -788,7 +900,7 @@ class WidgetBoard(private val prefs: SharedPreferences) {
         }
         val p = decodePresets(json).firstOrNull() ?: return null
         val items = p.items.take(20).map {
-            it.copy(col = it.col.coerceIn(0, 3), row = it.row.coerceIn(0, 30), cols = it.cols.coerceIn(1, 4), rows = it.rows.coerceIn(1, 12), id = 0L)
+            it.copy(col = it.col.coerceIn(0, 11), row = it.row.coerceIn(0, 30), cols = it.cols.coerceIn(1, 12), rows = it.rows.coerceIn(1, 12), id = 0L)
         }
         if (items.isEmpty()) return null
         var name = "Imported layout"
@@ -842,7 +954,12 @@ class WidgetBoard(private val prefs: SharedPreferences) {
 fun LauncherRoot(tick: Int, homeSignal: Int, active: Boolean = true) {
     val ctx = LocalContext.current
     val prefs = remember { ctx.getSharedPreferences("brassworks", Context.MODE_PRIVATE) }
-    val board = remember { WidgetBoard(prefs) }
+    val land = LocalConfiguration.current.orientation == Configuration.ORIENTATION_LANDSCAPE
+    val board = remember { WidgetBoard(prefs, land) }
+    val focusManager = LocalFocusManager.current
+    val rootView = LocalView.current
+    LaunchedEffect(homeSignal) { dropFocus(ctx, rootView, focusManager) }
+    LaunchedEffect(active) { if (!active) dropFocus(ctx, rootView, focusManager) }
 
     var apps by remember { mutableStateOf<List<AppInfo>>(emptyList()) }
     LaunchedEffect(tick) { apps = withContext(Dispatchers.Default) { loadApps(ctx) } }
@@ -1488,6 +1605,9 @@ private fun HomeScreen(
     onDone: () -> Unit,
 ) {
     val ctx = LocalContext.current
+    val focus = LocalFocusManager.current
+    val view = LocalView.current
+    val land = LocalConfiguration.current.orientation == Configuration.ORIENTATION_LANDSCAPE
     val is24 = remember { DateFormat.is24HourFormat(ctx) }
     var now by remember { mutableStateOf(LocalDateTime.now()) }
     var battery by remember { mutableFloatStateOf(batteryLevel(ctx)) }
@@ -1503,13 +1623,13 @@ private fun HomeScreen(
     Box(Modifier.fillMaxSize()) {
         SteamBackdrop()
         // Press and hold on empty space to rearrange widgets
-        Box(Modifier.fillMaxSize().pointerInput(Unit) { detectTapGestures(onLongPress = { onEnterEdit() }) })
+        Box(Modifier.fillMaxSize().pointerInput(Unit) { detectTapGestures(onTap = { dropFocus(ctx, view, focus) }, onLongPress = { onEnterEdit() }) })
 
         BoxWithConstraints(Modifier.fillMaxSize().statusBarsPadding().navigationBarsPadding().padding(16.dp)) {
-            LaunchedEffect(maxWidth, maxHeight) {
+            LaunchedEffect(maxWidth, maxHeight, land) {
                 board.areaW = maxWidth.value
                 board.areaH = maxHeight.value
-                board.ensureDefaults()
+                board.ensureDefaults(land)
             }
             if (editing && board.gridMode) {
                 Canvas(Modifier.fillMaxSize()) {
@@ -1881,24 +2001,54 @@ private fun AlmanacContent(now: LocalDateTime) = BoxWithConstraints(Modifier.fil
 
 @Composable
 private fun MemoContent(id: Long, prefs: SharedPreferences, editing: Boolean) {
+    val ctx = LocalContext.current
+    val focus = LocalFocusManager.current
+    val view = LocalView.current
     var text by remember(id) { mutableStateOf(prefs.getString("note_$id", "") ?: "") }
+    // The note can only take focus after you tap it, so it never pops the keyboard open by itself.
+    var armed by remember { mutableStateOf(false) }
+    var focused by remember { mutableStateOf(false) }
+    val requester = remember { FocusRequester() }
+    LaunchedEffect(armed) { if (armed) requester.requestFocus() }
     Column(Modifier.fillMaxSize()) {
-        Text("Memorandum", style = MaterialTheme.typography.titleMedium, color = Steam.BrassLight, fontSize = 14.sp)
+        Row(verticalAlignment = Alignment.CenterVertically) {
+            Text(
+                "Memorandum", style = MaterialTheme.typography.titleMedium, color = Steam.BrassLight,
+                fontSize = 14.sp, modifier = Modifier.weight(1f),
+            )
+            if (focused) {
+                Text(
+                    "Done", style = MaterialTheme.typography.titleMedium, color = Steam.BrassLight, fontSize = 14.sp,
+                    modifier = Modifier.clickable { dropFocus(ctx, view, focus) }.padding(horizontal = 6.dp),
+                )
+            }
+        }
         Spacer(Modifier.height(6.dp))
-        BasicTextField(
-            value = text,
-            onValueChange = { text = it; prefs.edit().putString("note_$id", it).apply() },
-            enabled = !editing,
-            textStyle = TextStyle(color = Steam.Parchment, fontFamily = Steam.font, fontSize = 15.sp, lineHeight = 21.sp),
-            cursorBrush = SolidColor(Steam.BrassLight),
-            modifier = Modifier.fillMaxWidth().weight(1f),
-            decorationBox = { inner ->
-                Box {
-                    if (text.isEmpty()) Text("Tap to jot a note", style = MaterialTheme.typography.labelLarge, color = Steam.Steam.copy(alpha = 0.6f))
-                    inner()
-                }
-            },
-        )
+        Box(Modifier.fillMaxWidth().weight(1f)) {
+            BasicTextField(
+                value = text,
+                onValueChange = { text = it; prefs.edit().putString("note_$id", it).apply() },
+                enabled = !editing,
+                textStyle = TextStyle(color = Steam.Parchment, fontFamily = Steam.font, fontSize = 15.sp, lineHeight = 21.sp),
+                cursorBrush = SolidColor(Steam.BrassLight),
+                modifier = Modifier
+                    .fillMaxSize()
+                    .focusRequester(requester)
+                    .focusProperties { canFocus = armed }
+                    .onFocusChanged { focused = it.isFocused; if (!it.isFocused) armed = false },
+                decorationBox = { inner ->
+                    Box {
+                        if (text.isEmpty()) Text("Tap to jot a note", style = MaterialTheme.typography.labelLarge, color = Steam.Steam.copy(alpha = 0.6f))
+                        inner()
+                    }
+                },
+            )
+            if (!armed && !editing) {
+                Box(
+                    Modifier.fillMaxSize().clickable(interactionSource = remember { MutableInteractionSource() }, indication = null) { armed = true }
+                )
+            }
+        }
     }
 }
 
@@ -1918,16 +2068,24 @@ private fun AppRowContent(
         if (list.isEmpty()) {
             Text(empty, style = MaterialTheme.typography.labelLarge, color = Steam.Steam)
         } else {
-            FlowRow(
-                Modifier.fillMaxSize().clipToBounds(),
-                horizontalArrangement = Arrangement.spacedBy(10.dp),
-                verticalArrangement = Arrangement.spacedBy(8.dp),
-            ) {
-                list.forEach { app ->
-                    Porthole(
-                        app.icon, size = iconSize,
-                        modifier = Modifier.combinedClickable(onClick = { onLaunch(app) }, onLongClick = { onLongPress(app) }),
-                    )
+            BoxWithConstraints(Modifier.fillMaxSize()) {
+                // icons stretch or shrink so each row fills the widget's width exactly
+                val gap = 8.dp
+                val pref = (maxWidth.value * 0.3f).coerceIn(38f, iconSize.value + 8f).dp
+                val perRow = maxOf(1, ((maxWidth + gap) / (pref + gap)).roundToInt())
+                val sz = maxOf((maxWidth - gap * (perRow - 1)) / perRow - 0.5.dp, 30.dp)
+                FlowRow(
+                    Modifier.fillMaxSize().clipToBounds(),
+                    horizontalArrangement = Arrangement.spacedBy(gap),
+                    verticalArrangement = Arrangement.spacedBy(gap),
+                    maxItemsInEachRow = perRow,
+                ) {
+                    list.forEach { app ->
+                        Porthole(
+                            app.icon, size = sz,
+                            modifier = Modifier.combinedClickable(onClick = { onLaunch(app) }, onLongClick = { onLongPress(app) }),
+                        )
+                    }
                 }
             }
         }
@@ -2478,7 +2636,7 @@ private fun DrawerScreen(
                 Spacer(Modifier.height(12.dp))
             }
             LazyVerticalGrid(
-                columns = GridCells.Fixed(4),
+                columns = GridCells.Adaptive(84.dp),
                 modifier = Modifier.weight(1f),
                 horizontalArrangement = Arrangement.spacedBy(4.dp),
                 verticalArrangement = Arrangement.spacedBy(14.dp),
