@@ -18,8 +18,10 @@
             android:name=".MainActivity"
             android:exported="true"
             android:launchMode="singleTask"
+            android:configChanges="orientation|screenSize|smallestScreenSize|screenLayout|keyboardHidden|uiMode"
             android:stateNotNeeded="true"
             android:resumeWhilePausing="true"
+            android:windowSoftInputMode="adjustPan"
             android:taskAffinity="">
             <!-- This is what makes Android offer it as a Home screen -->
             <intent-filter>
