@@ -25,6 +25,7 @@ import androidx.compose.ui.draw.clip
 import androidx.compose.ui.draw.drawBehind
 import androidx.compose.ui.draw.shadow
 import androidx.compose.ui.geometry.Offset
+import androidx.compose.ui.layout.ContentScale
 import androidx.compose.ui.geometry.Rect
 import androidx.compose.ui.geometry.Size
 import androidx.compose.ui.graphics.Brush
@@ -106,9 +107,15 @@ fun Gear(
 @Composable
 fun SteamBackdrop(modifier: Modifier = Modifier) {
     Box(modifier.fillMaxSize().background(Brush.verticalGradient(listOf(Steam.Leather, Steam.Soot)))) {
-        Gear(Modifier.size(280.dp).align(Alignment.TopEnd).offset(100.dp, (-60).dp).alpha(0.09f), teeth = 14, speed = 48f)
-        Gear(Modifier.size(220.dp).align(Alignment.CenterStart).offset((-110).dp, 40.dp).alpha(0.07f), teeth = 11, speed = 36f, reverse = true)
-        Gear(Modifier.size(200.dp).align(Alignment.BottomEnd).offset(70.dp, 60.dp).alpha(0.08f), teeth = 10, speed = 30f, reverse = true)
+        val wall = Steam.wallpaper
+        if (wall != null) {
+            Image(wall, contentDescription = null, modifier = Modifier.fillMaxSize(), contentScale = ContentScale.Crop)
+            Box(Modifier.fillMaxSize().background(Color.Black.copy(alpha = Steam.wallDim)))
+        } else {
+            Gear(Modifier.size(280.dp).align(Alignment.TopEnd).offset(100.dp, (-60).dp).alpha(0.09f), teeth = 14, speed = 48f)
+            Gear(Modifier.size(220.dp).align(Alignment.CenterStart).offset((-110).dp, 40.dp).alpha(0.07f), teeth = 11, speed = 36f, reverse = true)
+            Gear(Modifier.size(200.dp).align(Alignment.BottomEnd).offset(70.dp, 60.dp).alpha(0.08f), teeth = 10, speed = 30f, reverse = true)
+        }
     }
 }
 
@@ -325,7 +332,7 @@ fun CogButton(
         }
         val fs = (diameter.value * 0.56f / (text.length * 0.62f)).coerceIn(9f, 15f)
         Text(
-            text, fontSize = fs.sp, fontFamily = FontFamily.Serif, fontWeight = FontWeight.Bold,
+            text, fontSize = fs.sp, fontFamily = Steam.font, fontWeight = FontWeight.Bold,
             color = Steam.Ink, maxLines = 1, softWrap = false,
         )
     }
@@ -421,7 +428,7 @@ fun NixieClock(hhmm: String, date: String?, modifier: Modifier = Modifier) =
                 NixieTube(hhmm[3], tw, th)
             }
             if (dateH > 0.dp && date != null) {
-                Text(date, fontSize = 13.sp, fontFamily = FontFamily.Serif, color = Steam.Parchment, maxLines = 1, modifier = Modifier.padding(top = 4.dp))
+                Text(date, fontSize = 13.sp, fontFamily = Steam.font, color = Steam.Parchment, maxLines = 1, modifier = Modifier.padding(top = 4.dp))
             }
         }
     }
@@ -461,10 +468,10 @@ fun CompassRose(heading: Float, modifier: Modifier = Modifier) = BoxWithConstrai
             drawCircle(Steam.BrassDark, r * 0.06f, c)
             drawCircle(Steam.BrassLight, r * 0.025f, c)
         }
-        Text("N", Modifier.align(Alignment.TopCenter).padding(top = inset), fontSize = fs, fontFamily = FontFamily.Serif, fontWeight = FontWeight.Bold, color = Steam.Copper)
-        Text("E", Modifier.align(Alignment.CenterEnd).padding(end = inset), fontSize = fs, fontFamily = FontFamily.Serif, fontWeight = FontWeight.Bold, color = Steam.Ink)
-        Text("S", Modifier.align(Alignment.BottomCenter).padding(bottom = inset), fontSize = fs, fontFamily = FontFamily.Serif, fontWeight = FontWeight.Bold, color = Steam.Ink)
-        Text("W", Modifier.align(Alignment.CenterStart).padding(start = inset), fontSize = fs, fontFamily = FontFamily.Serif, fontWeight = FontWeight.Bold, color = Steam.Ink)
+        Text("N", Modifier.align(Alignment.TopCenter).padding(top = inset), fontSize = fs, fontFamily = Steam.font, fontWeight = FontWeight.Bold, color = Steam.Copper)
+        Text("E", Modifier.align(Alignment.CenterEnd).padding(end = inset), fontSize = fs, fontFamily = Steam.font, fontWeight = FontWeight.Bold, color = Steam.Ink)
+        Text("S", Modifier.align(Alignment.BottomCenter).padding(bottom = inset), fontSize = fs, fontFamily = Steam.font, fontWeight = FontWeight.Bold, color = Steam.Ink)
+        Text("W", Modifier.align(Alignment.CenterStart).padding(start = inset), fontSize = fs, fontFamily = Steam.font, fontWeight = FontWeight.Bold, color = Steam.Ink)
     }
     Canvas(Modifier.fillMaxSize()) {
         val c = center

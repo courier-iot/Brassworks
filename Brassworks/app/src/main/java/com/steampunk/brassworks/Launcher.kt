@@ -864,6 +864,18 @@ fun LauncherRoot(tick: Int, homeSignal: Int, active: Boolean = true) {
     var hiddenDialog by remember { mutableStateOf(false) }
     var importDialog by remember { mutableStateOf(false) }
     var themeDialog by remember { mutableStateOf(false) }
+    val pickFont = rememberLauncherForActivityResult(ActivityResultContracts.OpenDocument()) { uri ->
+        if (uri != null) {
+            val ok = Steam.installCustomFont(ctx, uri)
+            Toast.makeText(ctx, if (ok) "Font installed" else "That file is not a usable .ttf or .otf font.", Toast.LENGTH_LONG).show()
+        }
+    }
+    val pickWall = rememberLauncherForActivityResult(ActivityResultContracts.OpenDocument()) { uri ->
+        if (uri != null) {
+            val ok = Steam.installWallpaper(ctx, uri)
+            Toast.makeText(ctx, if (ok) "Wallpaper set" else "That picture could not be used.", Toast.LENGTH_LONG).show()
+        }
+    }
     var hidden by remember { mutableStateOf(loadHidden(prefs)) }
 
     // Pressing the Home button closes everything and returns to the main screen.
@@ -1150,8 +1162,11 @@ fun LauncherRoot(tick: Int, homeSignal: Int, active: Boolean = true) {
         if (themeDialog) {
             Dialog(onDismissRequest = { themeDialog = false }) {
                 RivetedPanel(Modifier.fillMaxWidth()) {
-                    Column(Modifier.fillMaxWidth(), verticalArrangement = Arrangement.spacedBy(12.dp)) {
-                        Text("THEME", style = MaterialTheme.typography.titleLarge, color = Steam.BrassLight)
+                    Column(
+                        Modifier.fillMaxWidth().heightIn(max = 600.dp).verticalScroll(rememberScrollState()),
+                        verticalArrangement = Arrangement.spacedBy(12.dp),
+                    ) {
+                        Text("THEME, FONT AND WALLPAPER", style = MaterialTheme.typography.titleLarge, color = Steam.BrassLight)
                         Text("Pick a metal. The whole home screen changes at once.", style = MaterialTheme.typography.labelLarge, color = Steam.Steam)
                         Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceEvenly) {
                             Palettes.forEach { p -> ThemeSwatch(p, p === Steam.palette) { Steam.choose(ctx, p) } }
@@ -1161,6 +1176,55 @@ fun LauncherRoot(tick: Int, homeSignal: Int, active: Boolean = true) {
                             SpeedChip("Slow", Steam.gearFactor == 1.8f, Modifier.weight(1f)) { Steam.setGear(ctx, 1.8f) }
                             SpeedChip("Normal", Steam.gearFactor == 1f, Modifier.weight(1f)) { Steam.setGear(ctx, 1f) }
                             SpeedChip("Fast", Steam.gearFactor == 0.5f, Modifier.weight(1f)) { Steam.setGear(ctx, 0.5f) }
+                        }
+                        Text("Font", style = MaterialTheme.typography.titleMedium, color = Steam.Parchment)
+                        Text("The Brassworks, est. 1887 · 0123456789", fontSize = 16.sp, fontFamily = Steam.font, color = Steam.BrassLight)
+                        Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                            SpeedChip("Classic", Steam.fontKey == "classic", Modifier.weight(1f)) { Steam.chooseFont(ctx, "classic") }
+                            SpeedChip("Victorian", Steam.fontKey == "victorian", Modifier.weight(1f)) {
+                                if (Steam.hasVictorian) {
+                                    Steam.chooseFont(ctx, "victorian")
+                                } else {
+                                    Toast.makeText(ctx, "The Victorian font is not in this build yet. See the README, or Upload your own.", Toast.LENGTH_LONG).show()
+                                }
+                            }
+                            SpeedChip("Script", Steam.fontKey == "script", Modifier.weight(1f)) { Steam.chooseFont(ctx, "script") }
+                        }
+                        Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                            SpeedChip("Plain", Steam.fontKey == "plain", Modifier.weight(1f)) { Steam.chooseFont(ctx, "plain") }
+                            SpeedChip("Typewriter", Steam.fontKey == "typewriter", Modifier.weight(1f)) { Steam.chooseFont(ctx, "typewriter") }
+                            SpeedChip(if (Steam.hasCustomFont) "Your font" else "Custom", Steam.fontKey == "custom", Modifier.weight(1f)) {
+                                if (Steam.hasCustomFont) Steam.chooseFont(ctx, "custom") else pickFont.launch(arrayOf("*/*"))
+                            }
+                        }
+                        Text(
+                            "Victorian is Old Standard TT (SIL Open Font Licence). Upload adds a .ttf or .otf of your own, such as IM Fell English or Cinzel. Find opens Google Fonts.",
+                            style = MaterialTheme.typography.labelLarge, color = Steam.Steam,
+                        )
+                        CogRow {
+                            CogButton("Upload") { pickFont.launch(arrayOf("*/*")) }
+                            CogButton("Find") { open(ctx, Intent(Intent.ACTION_VIEW, Uri.parse("https://fonts.google.com/?query=victorian"))) }
+                            if (Steam.hasCustomFont) CogButton("Remove") { Steam.removeCustomFont(ctx) }
+                        }
+                        Text("Wallpaper", style = MaterialTheme.typography.titleMedium, color = Steam.Parchment)
+                        Text(
+                            if (Steam.hasWallpaper) "Darken the picture so your widgets stay easy to read."
+                            else "Pick a picture to show behind your widgets and the archive.",
+                            style = MaterialTheme.typography.labelLarge, color = Steam.Steam,
+                        )
+                        if (Steam.hasWallpaper) {
+                            Slider(
+                                value = Steam.wallDim,
+                                onValueChange = { Steam.setDim(ctx, it) },
+                                valueRange = 0f..0.85f,
+                                colors = SliderDefaults.colors(
+                                    thumbColor = Steam.BrassLight, activeTrackColor = Steam.Brass, inactiveTrackColor = Steam.Soot,
+                                ),
+                            )
+                        }
+                        CogRow {
+                            CogButton("Picture") { pickWall.launch(arrayOf("image/*")) }
+                            if (Steam.hasWallpaper) CogButton("Clear") { Steam.removeWallpaper(ctx) }
                         }
                         CogRow { CogButton("Close") { themeDialog = false } }
                     }
@@ -1327,7 +1391,7 @@ private fun HiddenRow(app: AppInfo, onOpen: () -> Unit, onShow: () -> Unit) {
         }
         Text(
             "Show", Modifier.clickable(onClick = onShow).padding(14.dp),
-            color = Steam.Verdigris, fontFamily = FontFamily.Serif, fontWeight = FontWeight.Bold,
+            color = Steam.Verdigris, fontFamily = Steam.font, fontWeight = FontWeight.Bold,
         )
     }
 }
@@ -1342,7 +1406,7 @@ private fun ThemeSwatch(p: Palette, selected: Boolean, onClick: () -> Unit) {
         )
         Spacer(Modifier.height(4.dp))
         Text(
-            p.name, fontSize = 12.sp, fontFamily = FontFamily.Serif,
+            p.name, fontSize = 12.sp, fontFamily = Steam.font,
             fontWeight = if (selected) FontWeight.Bold else FontWeight.Normal,
             color = if (selected) Steam.BrassLight else Steam.Steam,
         )
@@ -1604,7 +1668,7 @@ private fun clockText(now: LocalDateTime, is24: Boolean): Pair<String, String?> 
 @Composable
 private fun TimeLine(time: String, ampm: String?, fontSize: Float) {
     Row(verticalAlignment = Alignment.Bottom) {
-        Text(time, fontSize = fontSize.sp, fontFamily = FontFamily.Serif, fontWeight = FontWeight.Bold, color = Steam.BrassLight, maxLines = 1)
+        Text(time, fontSize = fontSize.sp, fontFamily = Steam.font, fontWeight = FontWeight.Bold, color = Steam.BrassLight, maxLines = 1)
         if (ampm != null) Text(
             ampm, style = MaterialTheme.typography.labelLarge, color = Steam.Steam,
             modifier = Modifier.padding(start = 6.dp, bottom = (fontSize * 0.14f).dp),
@@ -1684,8 +1748,8 @@ private fun GaugeContent(value: Float, dangerLow: Boolean, title: String, captio
         Column(Modifier.fillMaxSize(), horizontalAlignment = Alignment.CenterHorizontally, verticalArrangement = Arrangement.Center) {
             PressureGauge(value, Modifier.size(minOf(mw, mh * 0.62f)), dangerLow)
             Spacer(Modifier.height(2.dp))
-            Text(title, fontSize = 14.sp, fontFamily = FontFamily.Serif, fontWeight = FontWeight.Bold, color = Steam.BrassLight, maxLines = 1)
-            Text(caption, fontSize = 12.sp, fontFamily = FontFamily.Serif, color = Steam.Steam, maxLines = 1)
+            Text(title, fontSize = 14.sp, fontFamily = Steam.font, fontWeight = FontWeight.Bold, color = Steam.BrassLight, maxLines = 1)
+            Text(caption, fontSize = 12.sp, fontFamily = Steam.font, color = Steam.Steam, maxLines = 1)
         }
     }
 }
@@ -1763,8 +1827,8 @@ private fun EngineRoomContent() = BoxWithConstraints(Modifier.fillMaxSize()) {
 private fun EngineDial(modifier: Modifier, dial: Dp, value: Float, title: String, caption: String) {
     Column(modifier, horizontalAlignment = Alignment.CenterHorizontally) {
         PressureGauge(value, Modifier.size(dial))
-        Text(title, fontSize = 12.sp, fontFamily = FontFamily.Serif, fontWeight = FontWeight.Bold, color = Steam.BrassLight, maxLines = 1)
-        Text(caption, fontSize = 11.sp, fontFamily = FontFamily.Serif, color = Steam.Steam, maxLines = 1)
+        Text(title, fontSize = 12.sp, fontFamily = Steam.font, fontWeight = FontWeight.Bold, color = Steam.BrassLight, maxLines = 1)
+        Text(caption, fontSize = 11.sp, fontFamily = Steam.font, color = Steam.Steam, maxLines = 1)
     }
 }
 
@@ -1780,13 +1844,13 @@ private fun AlmanacContent(now: LocalDateTime) = BoxWithConstraints(Modifier.fil
     Column(Modifier.fillMaxSize()) {
         Text(
             now.month.getDisplayName(JTextStyle.FULL, Locale.getDefault()) + " " + now.year,
-            fontSize = 14.sp, fontFamily = FontFamily.Serif, fontWeight = FontWeight.Bold, color = Steam.BrassLight,
+            fontSize = 14.sp, fontFamily = Steam.font, fontWeight = FontWeight.Bold, color = Steam.BrassLight,
             modifier = Modifier.height(22.dp), maxLines = 1,
         )
         Row(Modifier.fillMaxWidth()) {
             "SMTWTFS".forEach { c ->
                 Box(Modifier.weight(1f).height(cellH), contentAlignment = Alignment.Center) {
-                    Text(c.toString(), fontSize = fs.sp, fontFamily = FontFamily.Serif, color = Steam.Steam)
+                    Text(c.toString(), fontSize = fs.sp, fontFamily = Steam.font, color = Steam.Steam)
                 }
             }
         }
@@ -1802,7 +1866,7 @@ private fun AlmanacContent(now: LocalDateTime) = BoxWithConstraints(Modifier.fil
                                 contentAlignment = Alignment.Center,
                             ) {
                                 Text(
-                                    "$d", fontSize = fs.sp, fontFamily = FontFamily.Serif,
+                                    "$d", fontSize = fs.sp, fontFamily = Steam.font,
                                     fontWeight = if (today) FontWeight.Bold else FontWeight.Normal,
                                     color = if (today) Steam.Ink else Steam.Parchment,
                                 )
@@ -1825,7 +1889,7 @@ private fun MemoContent(id: Long, prefs: SharedPreferences, editing: Boolean) {
             value = text,
             onValueChange = { text = it; prefs.edit().putString("note_$id", it).apply() },
             enabled = !editing,
-            textStyle = TextStyle(color = Steam.Parchment, fontFamily = FontFamily.Serif, fontSize = 15.sp, lineHeight = 21.sp),
+            textStyle = TextStyle(color = Steam.Parchment, fontFamily = Steam.font, fontSize = 15.sp, lineHeight = 21.sp),
             cursorBrush = SolidColor(Steam.BrassLight),
             modifier = Modifier.fillMaxWidth().weight(1f),
             decorationBox = { inner ->
@@ -1900,7 +1964,7 @@ private fun FolderContent(name: String, list: List<AppInfo>, onOpen: () -> Unit)
             }
             Spacer(Modifier.height(4.dp))
             Text(
-                name, fontSize = 14.sp, fontFamily = FontFamily.Serif, fontWeight = FontWeight.Bold,
+                name, fontSize = 14.sp, fontFamily = Steam.font, fontWeight = FontWeight.Bold,
                 color = Steam.BrassLight, maxLines = 1, overflow = TextOverflow.Ellipsis,
             )
         }
@@ -2080,7 +2144,7 @@ private fun findLocation(ctx: Context, prefs: SharedPreferences, granted: Boolea
 @Composable
 private fun WidgetNote(title: String, text: String, modifier: Modifier = Modifier) {
     Column(modifier.fillMaxSize(), verticalArrangement = Arrangement.Center, horizontalAlignment = Alignment.CenterHorizontally) {
-        Text(title, fontSize = 14.sp, fontFamily = FontFamily.Serif, fontWeight = FontWeight.Bold, color = Steam.BrassLight, maxLines = 1)
+        Text(title, fontSize = 14.sp, fontFamily = Steam.font, fontWeight = FontWeight.Bold, color = Steam.BrassLight, maxLines = 1)
         Text(text, style = MaterialTheme.typography.labelLarge, color = Steam.Steam, textAlign = TextAlign.Center)
     }
 }
@@ -2136,7 +2200,7 @@ private fun CompassContent() = BoxWithConstraints(Modifier.fillMaxSize()) {
             CompassRose(heading, Modifier.size(dial))
             Text(
                 "${heading.roundToInt() % 360}° ${cardinal(heading)}",
-                fontSize = 12.sp, fontFamily = FontFamily.Serif, color = Steam.Steam, maxLines = 1,
+                fontSize = 12.sp, fontFamily = Steam.font, color = Steam.Steam, maxLines = 1,
             )
         }
     }
@@ -2199,8 +2263,8 @@ private fun MoonContent(now: LocalDateTime) = BoxWithConstraints(Modifier.fillMa
         Column(Modifier.fillMaxSize(), horizontalAlignment = Alignment.CenterHorizontally, verticalArrangement = Arrangement.Center) {
             MoonDisc(age, Modifier.size(minOf(mw, mh * 0.62f)))
             Spacer(Modifier.height(2.dp))
-            Text(name, fontSize = 13.sp, fontFamily = FontFamily.Serif, fontWeight = FontWeight.Bold, color = Steam.BrassLight, maxLines = 1)
-            Text("$lit% lit", fontSize = 11.sp, fontFamily = FontFamily.Serif, color = Steam.Steam, maxLines = 1)
+            Text(name, fontSize = 13.sp, fontFamily = Steam.font, fontWeight = FontWeight.Bold, color = Steam.BrassLight, maxLines = 1)
+            Text("$lit% lit", fontSize = 11.sp, fontFamily = Steam.font, color = Steam.Steam, maxLines = 1)
         }
     }
 }
@@ -2256,8 +2320,8 @@ private fun SunContent(now: LocalDateTime, is24: Boolean, prefs: SharedPreferenc
             } else {
                 Column(Modifier.fillMaxSize(), horizontalAlignment = Alignment.CenterHorizontally, verticalArrangement = Arrangement.Center) {
                     SunArc(progress, Modifier.fillMaxWidth().height(mh * 0.5f))
-                    Text(times, fontSize = 12.sp, fontFamily = FontFamily.Serif, color = Steam.Parchment, maxLines = 1)
-                    Text(status, fontSize = 11.sp, fontFamily = FontFamily.Serif, color = Steam.Steam, maxLines = 1)
+                    Text(times, fontSize = 12.sp, fontFamily = Steam.font, color = Steam.Parchment, maxLines = 1)
+                    Text(status, fontSize = 11.sp, fontFamily = Steam.font, color = Steam.Steam, maxLines = 1)
                 }
             }
         }
@@ -2322,7 +2386,7 @@ private fun ChronoContent(id: Long, prefs: SharedPreferences) = BoxWithConstrain
                 }
             }
             if (lap > 0L) {
-                Text("Lap " + chronoText(lap), fontSize = 11.sp, fontFamily = FontFamily.Serif, color = Steam.Steam, maxLines = 1)
+                Text("Lap " + chronoText(lap), fontSize = 11.sp, fontFamily = Steam.font, color = Steam.Steam, maxLines = 1)
             }
         }
     }
@@ -2393,7 +2457,7 @@ private fun DrawerScreen(
                 ) {
                     Row(verticalAlignment = Alignment.CenterVertically) {
                         Text(
-                            "= $calc", fontSize = 28.sp, fontFamily = FontFamily.Serif, fontWeight = FontWeight.Bold,
+                            "= $calc", fontSize = 28.sp, fontFamily = Steam.font, fontWeight = FontWeight.Bold,
                             color = Steam.BrassLight, maxLines = 1, overflow = TextOverflow.Ellipsis, modifier = Modifier.weight(1f),
                         )
                         Text("Tap to copy", style = MaterialTheme.typography.labelLarge, color = Steam.Steam)
@@ -2436,7 +2500,7 @@ private fun AppCell(app: AppInfo, onLaunch: (AppInfo) -> Unit, onLongPress: (App
         Porthole(app.icon, size = 62.dp)
         Spacer(Modifier.height(4.dp))
         Text(
-            app.label, fontSize = 12.sp, fontFamily = FontFamily.Serif, color = Steam.Parchment,
+            app.label, fontSize = 12.sp, fontFamily = Steam.font, color = Steam.Parchment,
             maxLines = 1, overflow = TextOverflow.Ellipsis, textAlign = TextAlign.Center,
         )
     }
