@@ -76,8 +76,25 @@ val Palettes = listOf(
  * The colours every screen uses. They read the current palette, so changing the theme
  * repaints everything immediately.
  */
+/** A colour for the nixie tubes: the lit digit and the halo around it. */
+class NixieColor(val name: String, val lit: Color, val glow: Color)
+
+val NixieColors = listOf(
+    NixieColor("Orange", Color(0xFFFFA24D), Color(0xFFFF6A00)),
+    NixieColor("Amber", Color(0xFFFFD36B), Color(0xFFFFA800)),
+    NixieColor("Red", Color(0xFFFF7A6B), Color(0xFFFF2A1A)),
+    NixieColor("Pink", Color(0xFFFF9AD5), Color(0xFFFF2DAA)),
+    NixieColor("Violet", Color(0xFFC9A0FF), Color(0xFF8A3DFF)),
+    NixieColor("Blue", Color(0xFF8FD0FF), Color(0xFF2E8BFF)),
+    NixieColor("Green", Color(0xFF9DFFB0), Color(0xFF1FD655)),
+    NixieColor("White", Color(0xFFFFF4E0), Color(0xFFFFDFA8)),
+)
+
 object Steam {
     var palette by mutableStateOf(Palettes[0])
+
+    /** The glow colour of every nixie tube. */
+    var nixie by mutableStateOf(NixieColors[0])
 
     /** Multiplies how long a gear takes to turn: 1.8 is slow, 1 normal, 0.5 fast. */
     var gearFactor by mutableFloatStateOf(1f)
@@ -129,6 +146,7 @@ object Steam {
         val p = prefs(ctx)
         palette = Palettes.firstOrNull { it.name == p.getString("theme", "Brass") } ?: Palettes[0]
         gearFactor = p.getFloat("gear", 1f)
+        nixie = NixieColors.firstOrNull { it.name == p.getString("nixie", "Orange") } ?: NixieColors[0]
         fontKey = p.getString("font", "classic") ?: "classic"
         readCustomFont(ctx)
         readVictorian(ctx)
@@ -213,6 +231,11 @@ object Steam {
     fun setDim(ctx: Context, v: Float) {
         wallDim = v
         prefs(ctx).edit().putFloat("wall_dim", v).apply()
+    }
+
+    fun chooseNixie(ctx: Context, c: NixieColor) {
+        nixie = c
+        prefs(ctx).edit().putString("nixie", c.name).apply()
     }
 
     fun choose(ctx: Context, pal: Palette) {

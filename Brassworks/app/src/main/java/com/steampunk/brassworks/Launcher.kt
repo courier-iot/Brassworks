@@ -433,6 +433,7 @@ enum class WType(
     val tip: String? = null,
 ) {
     CLOCK("Nixie clock", "Glowing tube digits in a brass frame", 340f, 140f, 150f, 100f, "Recommended: the centrepiece"),
+    NIXIE("Nixie tubes", "Just the glowing tubes, no date", 340f, 66f, 150f, 60f, "Recommended: a clean, compact clock"),
     ANALOG("Brass dial", "Analogue dial with the time", 340f, 140f, 150f, 120f),
     DIGITAL("Time plaque", "Large digital time and date", 340f, 100f, 150f, 80f),
     BOILER("Boiler pressure", "Battery level on a dial gauge", 164f, 140f, 110f, 110f, "Recommended: your charge at a glance"),
@@ -912,6 +913,18 @@ class WidgetBoard(private val prefs: SharedPreferences, land: Boolean = false) {
         return imported
     }
 
+    /** Renames one of your presets. Returns null on success, or a message saying why it was refused. */
+    fun renamePreset(old: String, new: String): String? {
+        val n = new.trim()
+        if (n.isEmpty()) return "Give the preset a name."
+        if (n == old) return null
+        if (BUILTIN_PRESETS.any { it.name.equals(n, ignoreCase = true) }) return "That name belongs to a built-in preset."
+        if (userPresets.any { it.name != old && it.name.equals(n, ignoreCase = true) }) return "You already have a preset with that name."
+        userPresets = userPresets.map { if (it.name == old) it.copy(name = n) else it }
+        persistPresets()
+        return null
+    }
+
     fun deletePreset(name: String) {
         userPresets = userPresets.filter { it.name != name }
         persistPresets()
@@ -980,6 +993,7 @@ fun LauncherRoot(tick: Int, homeSignal: Int, active: Boolean = true) {
     var saveDialog by remember { mutableStateOf(false) }
     var hiddenDialog by remember { mutableStateOf(false) }
     var importDialog by remember { mutableStateOf(false) }
+    var renameFrom by remember { mutableStateOf<String?>(null) }
     var themeDialog by remember { mutableStateOf(false) }
     val pickFont = rememberLauncherForActivityResult(ActivityResultContracts.OpenDocument()) { uri ->
         if (uri != null) {
@@ -998,7 +1012,7 @@ fun LauncherRoot(tick: Int, homeSignal: Int, active: Boolean = true) {
     // Pressing the Home button closes everything and returns to the main screen.
     LaunchedEffect(homeSignal) {
         drawer = false; menuApp = null; settings = false; fabMenu = false; picker = false; editing = false
-        openFolder = null; menuFolder = null; folderPick = null; presetDialog = false; saveDialog = false; hiddenDialog = false; importDialog = false; themeDialog = false
+        openFolder = null; menuFolder = null; folderPick = null; presetDialog = false; saveDialog = false; hiddenDialog = false; importDialog = false; themeDialog = false; renameFrom = null
     }
     BackHandler(enabled = drawer || menuApp != null || settings || fabMenu || picker || editing || folderPick != null || openFolder != null) {
         when {
@@ -1243,15 +1257,15 @@ fun LauncherRoot(tick: Int, homeSignal: Int, active: Boolean = true) {
                     Column(Modifier.fillMaxWidth(), verticalArrangement = Arrangement.spacedBy(10.dp)) {
                         Text("PRESETS", style = MaterialTheme.typography.titleLarge, color = Steam.BrassLight)
                         Text(
-                            "Tap a preset to apply it. Your current layout is kept as Previous layout. Save stores your layout, Share sends it as a text code, Import adds a code you received.",
+                            "Tap a preset to apply it. Your current layout is kept as Previous layout. Tap the pencil to rename one of yours. Save stores your layout, Share sends it as a text code, Import adds a code you received.",
                             style = MaterialTheme.typography.labelLarge, color = Steam.Steam,
                         )
                         Column(
                             Modifier.heightIn(max = 360.dp).verticalScroll(rememberScrollState()),
                             verticalArrangement = Arrangement.spacedBy(8.dp),
                         ) {
-                            BUILTIN_PRESETS.forEach { p -> PresetRow(p, null) { applyPreset(p) } }
-                            board.userPresets.forEach { p -> PresetRow(p, { board.deletePreset(p.name) }) { applyPreset(p) } }
+                            BUILTIN_PRESETS.forEach { p -> PresetRow(p, null, null) { applyPreset(p) } }
+                            board.userPresets.forEach { p -> PresetRow(p, { board.deletePreset(p.name) }, { presetDialog = false; renameFrom = p.name }) { applyPreset(p) } }
                         }
                         CogRow {
                             CogButton("Save") { presetDialog = false; saveDialog = true }
@@ -1293,6 +1307,10 @@ fun LauncherRoot(tick: Int, homeSignal: Int, active: Boolean = true) {
                             SpeedChip("Slow", Steam.gearFactor == 1.8f, Modifier.weight(1f)) { Steam.setGear(ctx, 1.8f) }
                             SpeedChip("Normal", Steam.gearFactor == 1f, Modifier.weight(1f)) { Steam.setGear(ctx, 1f) }
                             SpeedChip("Fast", Steam.gearFactor == 0.5f, Modifier.weight(1f)) { Steam.setGear(ctx, 0.5f) }
+                        }
+                        Text("Nixie glow", style = MaterialTheme.typography.titleMedium, color = Steam.Parchment)
+                        CogRow {
+                            NixieColors.forEach { c -> NixieSwatch(c, Steam.nixie === c) { Steam.chooseNixie(ctx, c) } }
                         }
                         Text("Font", style = MaterialTheme.typography.titleMedium, color = Steam.Parchment)
                         Text("The Brassworks, est. 1887 · 0123456789", fontSize = 16.sp, fontFamily = Steam.font, color = Steam.BrassLight)
@@ -1383,6 +1401,36 @@ fun LauncherRoot(tick: Int, homeSignal: Int, active: Boolean = true) {
                                 }
                             }
                             CogButton("Cancel") { importDialog = false }
+                        }
+                    }
+                }
+            }
+        }
+
+        // Rename one of your presets
+        renameFrom?.let { old ->
+            var text by remember(old) { mutableStateOf(old) }
+            Dialog(onDismissRequest = { renameFrom = null; presetDialog = true }) {
+                RivetedPanel(Modifier.fillMaxWidth()) {
+                    Column(Modifier.fillMaxWidth(), verticalArrangement = Arrangement.spacedBy(10.dp)) {
+                        Text("RENAME PRESET", style = MaterialTheme.typography.titleLarge, color = Steam.BrassLight)
+                        Text("Currently called $old.", style = MaterialTheme.typography.labelLarge, color = Steam.Steam)
+                        OutlinedTextField(
+                            value = text, onValueChange = { text = it }, modifier = Modifier.fillMaxWidth(),
+                            singleLine = true, placeholder = { Text("New name") }, colors = steamFieldColors(),
+                        )
+                        CogRow {
+                            CogButton("Rename") {
+                                val problem = board.renamePreset(old, text)
+                                if (problem == null) {
+                                    Toast.makeText(ctx, "Renamed to ${text.trim()}", Toast.LENGTH_SHORT).show()
+                                    renameFrom = null
+                                    presetDialog = true
+                                } else {
+                                    Toast.makeText(ctx, problem, Toast.LENGTH_LONG).show()
+                                }
+                            }
+                            CogButton("Cancel") { renameFrom = null; presetDialog = true }
                         }
                     }
                 }
@@ -1546,7 +1594,7 @@ private fun SpeedChip(label: String, selected: Boolean, modifier: Modifier, onCl
 }
 
 @Composable
-private fun PresetRow(p: Preset, onDelete: (() -> Unit)?, onClick: () -> Unit) {
+private fun PresetRow(p: Preset, onDelete: (() -> Unit)?, onRename: (() -> Unit)?, onClick: () -> Unit) {
     val shape = RoundedCornerShape(8.dp)
     Row(
         Modifier.fillMaxWidth().clip(shape)
@@ -1561,8 +1609,11 @@ private fun PresetRow(p: Preset, onDelete: (() -> Unit)?, onClick: () -> Unit) {
                 style = MaterialTheme.typography.bodyMedium, color = Steam.Parchment,
             )
         }
+        if (onRename != null) {
+            Text("✎", Modifier.clickable(onClick = onRename).padding(horizontal = 10.dp, vertical = 14.dp), color = Steam.BrassLight, fontSize = 20.sp)
+        }
         if (onDelete != null) {
-            Text("✕", Modifier.clickable(onClick = onDelete).padding(14.dp), color = Steam.Copper, fontSize = 20.sp)
+            Text("✕", Modifier.clickable(onClick = onDelete).padding(horizontal = 12.dp, vertical = 14.dp), color = Steam.Copper, fontSize = 20.sp)
         }
     }
 }
@@ -1744,9 +1795,10 @@ private fun WidgetBody(
     onLongPress: (AppInfo) -> Unit,
     onOpenFolder: (Long) -> Unit,
 ) {
-    RivetedPanel(Modifier.fillMaxSize()) {
+    RivetedPanel(Modifier.fillMaxSize(), padding = if (w.type == WType.NIXIE) 8.dp else 16.dp) {
         when (w.type) {
             WType.CLOCK -> NixieContent(now, is24)
+            WType.NIXIE -> NixiePlainContent(now, is24)
             WType.ANALOG -> ClockContent(now, is24)
             WType.DIGITAL -> DigitalContent(now, is24)
             WType.BOILER -> GaugeContent(battery, true, "Boiler pressure", "${(battery * 100).toInt()}% charged")
@@ -1825,6 +1877,36 @@ private fun ClockContent(now: LocalDateTime, is24: Boolean) = BoxWithConstraints
             Spacer(Modifier.height(4.dp))
             TimeLine(time, ampm, (mh.value * 0.14f).coerceIn(14f, 28f))
         }
+    }
+}
+
+/** The tubes on their own: no date line, so they fill a short widget. */
+@Composable
+private fun NixiePlainContent(now: LocalDateTime, is24: Boolean) {
+    val hour = if (is24) now.hour else (now.hour % 12).let { if (it == 0) 12 else it }
+    val hh = if (is24) hour.toString().padStart(2, '0') else hour.toString().padStart(2, ' ')
+    NixieClock(
+        hh + now.format(DateTimeFormatter.ofPattern("mm")), null, Modifier.fillMaxSize(),
+        badge = if (is24) null else (if (now.hour < 12) "AM" else "PM"),
+    )
+}
+
+@Composable
+private fun NixieSwatch(c: NixieColor, selected: Boolean, onClick: () -> Unit) {
+    Column(
+        Modifier.clip(RoundedCornerShape(10.dp)).clickable(onClick = onClick).padding(4.dp),
+        horizontalAlignment = Alignment.CenterHorizontally,
+    ) {
+        Box(
+            Modifier.size(38.dp).clip(CircleShape)
+                .background(Brush.radialGradient(listOf(c.lit, c.glow, Color(0xFF1A0C06))))
+                .border(if (selected) 3.dp else 1.dp, if (selected) Steam.BrassLight else Steam.BrassDark, CircleShape),
+        )
+        Text(
+            c.name, fontSize = 11.sp, fontFamily = Steam.font,
+            fontWeight = if (selected) FontWeight.Bold else FontWeight.Normal,
+            color = if (selected) Steam.BrassLight else Steam.Steam, maxLines = 1,
+        )
     }
 }
 

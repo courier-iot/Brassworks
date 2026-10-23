@@ -143,6 +143,7 @@ private fun DrawScope.rivet(at: Offset, scale: Float = 1f) {
 fun RivetedPanel(
     modifier: Modifier = Modifier,
     onClick: (() -> Unit)? = null,
+    padding: Dp = 16.dp,
     content: @Composable BoxScope.() -> Unit,
 ) {
     val shape = RoundedCornerShape(10.dp)
@@ -158,7 +159,7 @@ fun RivetedPanel(
                 rivet(Offset(i, i)); rivet(Offset(size.width - i, i))
                 rivet(Offset(i, size.height - i)); rivet(Offset(size.width - i, size.height - i))
             }
-            .padding(16.dp),
+            .padding(padding),
         content = content,
     )
 }
@@ -365,8 +366,6 @@ fun CogRow(modifier: Modifier = Modifier, content: @Composable () -> Unit) {
 
 // ───────────────────────── Nixie tube clock ─────────────────────────
 
-private val NixieOrange = Color(0xFFFFA24D)
-private val NixieGlow = Color(0xFFFF6A00)
 
 @Composable
 private fun NixieTube(digit: Char, w: Dp, h: Dp) {
@@ -383,23 +382,23 @@ private fun NixieTube(digit: Char, w: Dp, h: Dp) {
             val step = size.width / 6f
             var x = step
             while (x < size.width) {
-                drawLine(NixieGlow.copy(alpha = 0.10f), Offset(x, 0f), Offset(x, size.height), strokeWidth = 1f)
+                drawLine(Steam.nixie.glow.copy(alpha = 0.10f), Offset(x, 0f), Offset(x, size.height), strokeWidth = 1f)
                 x += step
             }
             var y = step
             while (y < size.height) {
-                drawLine(NixieGlow.copy(alpha = 0.07f), Offset(0f, y), Offset(size.width, y), strokeWidth = 1f)
+                drawLine(Steam.nixie.glow.copy(alpha = 0.07f), Offset(0f, y), Offset(size.width, y), strokeWidth = 1f)
                 y += step
             }
             drawRect(Color.White.copy(alpha = 0.07f), topLeft = Offset(size.width * 0.12f, size.height * 0.06f), size = Size(size.width * 0.08f, size.height * 0.5f))
             drawRect(Brush.verticalGradient(listOf(Steam.Brass, Steam.BrassDark)), topLeft = Offset(0f, size.height * 0.92f), size = Size(size.width, size.height * 0.08f))
         }
         // the unlit cathodes behind the lit one
-        Text("8", fontSize = fs, fontFamily = FontFamily.SansSerif, color = NixieGlow.copy(alpha = 0.14f))
+        Text("8", fontSize = fs, fontFamily = FontFamily.SansSerif, color = Steam.nixie.glow.copy(alpha = 0.14f))
         if (digit != ' ') {
             Text(
                 digit.toString(), fontSize = fs, fontFamily = FontFamily.SansSerif, fontWeight = FontWeight.Medium,
-                color = NixieOrange, style = TextStyle(shadow = Shadow(NixieGlow, Offset.Zero, 24f)),
+                color = Steam.nixie.lit, style = TextStyle(shadow = Shadow(Steam.nixie.glow, Offset.Zero, 24f)),
             )
         }
     }
@@ -416,21 +415,22 @@ private fun NixieColon(w: Dp, h: Dp) {
         val r = size.width * 0.14f
         for (f in listOf(0.34f, 0.66f)) {
             val c = Offset(size.width / 2f, size.height * f)
-            drawCircle(NixieGlow.copy(alpha = 0.35f * glow), r * 2.6f, c)
-            drawCircle(NixieOrange.copy(alpha = glow), r, c)
+            drawCircle(Steam.nixie.glow.copy(alpha = 0.35f * glow), r * 2.6f, c)
+            drawCircle(Steam.nixie.lit.copy(alpha = glow), r, c)
         }
     }
 }
 
 /** Four glowing tubes (HHMM, a space gives a dark tube) with blinking colon dots and a date line. */
 @Composable
-fun NixieClock(hhmm: String, date: String?, modifier: Modifier = Modifier) =
+fun NixieClock(hhmm: String, date: String?, modifier: Modifier = Modifier, badge: String? = null) =
     BoxWithConstraints(modifier) {
         val mw = maxWidth
         val mh = maxHeight
         val gap = 4.dp
         val dateH = if (date != null && mh > 80.dp) 30.dp else 0.dp
-        val th = maxOf(minOf(mh - dateH, (mw - gap * 4) / 2.64f), 20.dp)
+        val reserve = if (badge != null) 26.dp else 0.dp
+        val th = maxOf(minOf(mh - dateH, (mw - gap * 4 - reserve) / 2.64f), 20.dp)
         val tw = th * 0.56f
         Column(Modifier.fillMaxSize(), horizontalAlignment = Alignment.CenterHorizontally, verticalArrangement = Arrangement.Center) {
             Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(gap)) {
@@ -439,6 +439,14 @@ fun NixieClock(hhmm: String, date: String?, modifier: Modifier = Modifier) =
                 NixieColon(tw * 0.4f, th)
                 NixieTube(hhmm[2], tw, th)
                 NixieTube(hhmm[3], tw, th)
+                if (badge != null) {
+                    Column(Modifier.height(th), verticalArrangement = Arrangement.Bottom) {
+                        Text(
+                            badge, fontSize = 11.sp, fontFamily = FontFamily.SansSerif, fontWeight = FontWeight.Medium,
+                            color = Steam.nixie.lit, style = TextStyle(shadow = Shadow(Steam.nixie.glow, Offset.Zero, 16f)),
+                        )
+                    }
+                }
             }
             if (dateH > 0.dp && date != null) {
                 Text(date, fontSize = 13.sp, fontFamily = Steam.font, color = Steam.Parchment, maxLines = 1, modifier = Modifier.padding(top = 4.dp).wrapContentHeight(Alignment.Top, unbounded = true))
