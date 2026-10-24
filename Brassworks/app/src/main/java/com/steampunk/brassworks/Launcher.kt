@@ -53,8 +53,10 @@ import androidx.compose.foundation.gestures.detectDragGestures
 import androidx.compose.foundation.gestures.detectTapGestures
 import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.lazy.grid.GridCells
+import androidx.compose.foundation.lazy.grid.GridItemSpan
 import androidx.compose.foundation.lazy.grid.LazyVerticalGrid
 import androidx.compose.foundation.lazy.grid.items
+import androidx.compose.foundation.lazy.grid.rememberLazyGridState
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
@@ -110,6 +112,7 @@ import androidx.core.content.ContextCompat
 import androidx.core.graphics.drawable.toBitmap
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.delay
+import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
 import org.json.JSONArray
 import org.json.JSONObject
@@ -118,6 +121,7 @@ import java.math.MathContext
 import android.net.TrafficStats
 import android.os.SystemClock
 import kotlin.math.ln
+import java.text.Normalizer
 import java.time.LocalDateTime
 import java.time.LocalTime
 import java.time.ZoneId
@@ -1299,8 +1303,10 @@ fun LauncherRoot(tick: Int, homeSignal: Int, active: Boolean = true) {
                     ) {
                         Text("THEME, FONT AND WALLPAPER", style = MaterialTheme.typography.titleLarge, color = Steam.BrassLight)
                         Text("Pick a metal. The whole home screen changes at once.", style = MaterialTheme.typography.labelLarge, color = Steam.Steam)
-                        Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceEvenly) {
-                            Palettes.forEach { p -> ThemeSwatch(p, p === Steam.palette) { Steam.choose(ctx, p) } }
+                        Palettes.chunked(4).forEach { rowOfFour ->
+                            Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceEvenly) {
+                                rowOfFour.forEach { p -> ThemeSwatch(p, p === Steam.palette) { Steam.choose(ctx, p) } }
+                            }
                         }
                         Text("Gear speed", style = MaterialTheme.typography.titleMedium, color = Steam.Parchment)
                         Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
@@ -2644,6 +2650,25 @@ private fun steamFieldColors() = OutlinedTextFieldDefaults.colors(
     focusedContainerColor = Steam.Soot, unfocusedContainerColor = Steam.Soot,
 )
 
+/** The letter an app is filed under in the Archive. É goes under E, and anything that is not a letter goes under #. */
+private fun sectionOf(label: String): String {
+    val first = label.trim().firstOrNull() ?: return "#"
+    val base = Normalizer.normalize(first.toString(), Normalizer.Form.NFD).firstOrNull() ?: first
+    return if (base.isLetter()) base.uppercaseChar().toString() else "#"
+}
+
+@Composable
+private fun LetterHeader(letter: String) {
+    Row(Modifier.fillMaxWidth().padding(top = 6.dp), verticalAlignment = Alignment.CenterVertically) {
+        Text(letter, fontSize = 20.sp, fontFamily = Steam.font, fontWeight = FontWeight.Bold, color = Steam.BrassLight)
+        Spacer(Modifier.width(10.dp))
+        Box(
+            Modifier.weight(1f).height(2.dp).clip(RoundedCornerShape(1.dp))
+                .background(Brush.horizontalGradient(listOf(Steam.BrassDark, Color.Transparent)))
+        )
+    }
+}
+
 @Composable
 private fun DrawerScreen(
     apps: List<AppInfo>,
@@ -2660,6 +2685,21 @@ private fun DrawerScreen(
             .map { it.first }
     }
     val calc = remember(query) { calcResult(query) }
+    val gridState = rememberLazyGridState()
+    val scope = rememberCoroutineScope()
+    // With no search typed, apps are grouped under A, B, C ... (digits and symbols go under #)
+    val sections = remember(shown, query) {
+        if (query.isBlank()) shown.groupBy { sectionOf(it.label) }.toList() else emptyList()
+    }
+    // Grid position of each letter's header, so the letter strip can jump straight to it
+    val headerAt = remember(sections) {
+        var at = 0
+        sections.associate { (letter, list) ->
+            val here = at
+            at += 1 + list.size
+            letter to here
+        }
+    }
     val webSearch = {
         open(ctx, Intent(Intent.ACTION_VIEW, Uri.parse("https://duckduckgo.com/?q=" + Uri.encode(query.trim()))))
     }
@@ -2717,14 +2757,38 @@ private fun DrawerScreen(
                 }
                 Spacer(Modifier.height(12.dp))
             }
-            LazyVerticalGrid(
-                columns = GridCells.Adaptive(84.dp),
-                modifier = Modifier.weight(1f),
-                horizontalArrangement = Arrangement.spacedBy(4.dp),
-                verticalArrangement = Arrangement.spacedBy(14.dp),
-                contentPadding = PaddingValues(bottom = 12.dp),
-            ) {
-                items(shown, key = { it.component.flattenToString() }) { app -> AppCell(app, onLaunch, onLongPress) }
+            BoxWithConstraints(Modifier.weight(1f)) {
+                val tall = maxHeight
+                val showStrip = query.isBlank() && sections.size > 3 && tall > 16.dp * sections.size
+                LazyVerticalGrid(
+                    columns = GridCells.Adaptive(76.dp),
+                    state = gridState,
+                    modifier = Modifier.fillMaxSize(),
+                    horizontalArrangement = Arrangement.spacedBy(4.dp),
+                    verticalArrangement = Arrangement.spacedBy(14.dp),
+                    contentPadding = PaddingValues(end = if (showStrip) 22.dp else 0.dp, bottom = 12.dp),
+                ) {
+                    if (query.isBlank()) {
+                        sections.forEach { (letter, list) ->
+                            item(key = "section_$letter", span = { GridItemSpan(maxLineSpan) }) { LetterHeader(letter) }
+                            items(list, key = { it.component.flattenToString() }) { app -> AppCell(app, onLaunch, onLongPress) }
+                        }
+                    } else {
+                        items(shown, key = { it.component.flattenToString() }) { app -> AppCell(app, onLaunch, onLongPress) }
+                    }
+                }
+                if (showStrip) {
+                    Column(Modifier.align(Alignment.CenterEnd), horizontalAlignment = Alignment.CenterHorizontally) {
+                        sections.forEach { (letter, _) ->
+                            Text(
+                                letter, fontSize = 11.sp, fontFamily = Steam.font, fontWeight = FontWeight.Bold, color = Steam.BrassLight,
+                                modifier = Modifier
+                                    .clickable { scope.launch { gridState.scrollToItem(headerAt[letter] ?: 0) } }
+                                    .padding(horizontal = 6.dp, vertical = 1.dp),
+                            )
+                        }
+                    }
+                }
             }
         }
     }

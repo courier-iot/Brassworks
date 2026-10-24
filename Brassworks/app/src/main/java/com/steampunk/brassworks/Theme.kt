@@ -70,6 +70,38 @@ val Palettes = listOf(
         Color(0xFFCF6A3C), Color(0xFF8AD6BE),
         Color(0xFFE4ECDD), Color(0xFF10211C), Color(0xFFB7C9C0),
     ),
+    // Purple: deep violet wood with amethyst metal
+    Palette(
+        "Amethyst",
+        Color(0xFF120C1A), Color(0xFF1E1530), Color(0xFF2D2046),
+        Color(0xFF9B6BD6), Color(0xFFD9BEFF), Color(0xFF4E2F82),
+        Color(0xFFD9506A), Color(0xFF6FD0B0),
+        Color(0xFFEDE6F5), Color(0xFF1B1226), Color(0xFFC8BFD6),
+    ),
+    // Pink: rosewood with soft rose metal (pink, not yellow gold)
+    Palette(
+        "Rose",
+        Color(0xFF1A0F12), Color(0xFF2A1820), Color(0xFF3D2430),
+        Color(0xFFD98E9A), Color(0xFFF7C9CF), Color(0xFF8A4553),
+        Color(0xFFD94B4B), Color(0xFF6CC0A4),
+        Color(0xFFF3E3DD), Color(0xFF2A1519), Color(0xFFD6C3C3),
+    ),
+    // Blue: navy with cobalt metal
+    Palette(
+        "Cobalt",
+        Color(0xFF090E1A), Color(0xFF111A2E), Color(0xFF1B2A47),
+        Color(0xFF3F7FE0), Color(0xFF9CC6FF), Color(0xFF1E4287),
+        Color(0xFFF0883A), Color(0xFF5FD0C0),
+        Color(0xFFE6EEF8), Color(0xFF0F1830), Color(0xFFB7C4D8),
+    ),
+    // Orange on charcoal: cooler and darker than Copper
+    Palette(
+        "Ember",
+        Color(0xFF121110), Color(0xFF1F1C1A), Color(0xFF2F2926),
+        Color(0xFFE2661F), Color(0xFFFFB06B), Color(0xFF8A3A0C),
+        Color(0xFFC21E1E), Color(0xFF6AB8A0),
+        Color(0xFFEEE3D2), Color(0xFF211510), Color(0xFFCFC6BB),
+    ),
 )
 
 /**
