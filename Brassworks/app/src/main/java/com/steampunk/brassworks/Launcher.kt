@@ -998,7 +998,6 @@ fun LauncherRoot(tick: Int, homeSignal: Int, active: Boolean = true) {
     var hiddenDialog by remember { mutableStateOf(false) }
     var importDialog by remember { mutableStateOf(false) }
     var renameFrom by remember { mutableStateOf<String?>(null) }
-    var themeDialog by remember { mutableStateOf(false) }
     val pickFont = rememberLauncherForActivityResult(ActivityResultContracts.OpenDocument()) { uri ->
         if (uri != null) {
             val ok = Steam.installCustomFont(ctx, uri)
@@ -1016,7 +1015,7 @@ fun LauncherRoot(tick: Int, homeSignal: Int, active: Boolean = true) {
     // Pressing the Home button closes everything and returns to the main screen.
     LaunchedEffect(homeSignal) {
         drawer = false; menuApp = null; settings = false; fabMenu = false; picker = false; editing = false
-        openFolder = null; menuFolder = null; folderPick = null; presetDialog = false; saveDialog = false; hiddenDialog = false; importDialog = false; themeDialog = false; renameFrom = null
+        openFolder = null; menuFolder = null; folderPick = null; presetDialog = false; saveDialog = false; hiddenDialog = false; importDialog = false; renameFrom = null
     }
     BackHandler(enabled = drawer || menuApp != null || settings || fabMenu || picker || editing || folderPick != null || openFolder != null) {
         when {
@@ -1046,11 +1045,25 @@ fun LauncherRoot(tick: Int, homeSignal: Int, active: Boolean = true) {
     fun applyPreset(p: Preset) {
         val dropped = board.applyPreset(p)
         presetDialog = false
+        settings = false
         Toast.makeText(
             ctx,
             "Applied ${p.name}" + (if (dropped > 0) ". $dropped widget(s) did not fit." else ""),
             Toast.LENGTH_SHORT,
         ).show()
+    }
+
+    fun shareLayout() {
+        val code = board.exportCode()
+        if (code == null) {
+            Toast.makeText(ctx, "Nothing to share yet. Add a widget first.", Toast.LENGTH_SHORT).show()
+        } else {
+            val send = Intent(Intent.ACTION_SEND)
+                .setType("text/plain")
+                .putExtra(Intent.EXTRA_SUBJECT, "Brassworks layout")
+                .putExtra(Intent.EXTRA_TEXT, code)
+            open(ctx, Intent.createChooser(send, "Share layout"))
+        }
     }
 
     val launch: (AppInfo) -> Unit = { app ->
@@ -1084,6 +1097,24 @@ fun LauncherRoot(tick: Int, homeSignal: Int, active: Boolean = true) {
                         onLaunch = launch,
                         onLongPress = { menuApp = it; menuFolder = null },
                         onClose = { drawer = false },
+                    )
+                }
+                AnimatedVisibility(
+                    visible = settings,
+                    enter = slideInVertically(tween(300)) { it } + fadeIn(tween(300)),
+                    exit = slideOutVertically(tween(250)) { it } + fadeOut(tween(250)),
+                ) {
+                    SettingsScreen(
+                        board = board,
+                        animations = animations,
+                        onAnimations = { animations = it; prefs.edit().putBoolean("anim", it).apply() },
+                        onPickFont = { pickFont.launch(arrayOf("*/*")) },
+                        onPickWall = { pickWall.launch(arrayOf("image/*")) },
+                        onPresets = { presetDialog = true },
+                        onShare = { shareLayout() },
+                        onImport = { importDialog = true },
+                        onHidden = { hiddenDialog = true },
+                        onClose = { settings = false },
                     )
                 }
             }
@@ -1156,12 +1187,16 @@ fun LauncherRoot(tick: Int, homeSignal: Int, active: Boolean = true) {
                 RivetedPanel(Modifier.fillMaxWidth()) {
                     Column(Modifier.fillMaxWidth(), verticalArrangement = Arrangement.spacedBy(10.dp)) {
                         Text("THE WORKSHOP", style = MaterialTheme.typography.titleLarge, color = Steam.BrassLight)
-                        Text("Tap the gear to open the archive. Add places a widget, Arrange moves and resizes them, Presets saves and applies layouts, Theme changes the metal and gear speed.", style = MaterialTheme.typography.labelLarge, color = Steam.Steam)
+                        Text("Tap the gear to open the archive. Add places a widget, Arrange moves and resizes them, Presets saves and applies layouts, Metal swaps the colour with one tap, and Settings has everything else.", style = MaterialTheme.typography.labelLarge, color = Steam.Steam)
                         CogRow {
                             CogButton("Add") { fabMenu = false; picker = true }
                             CogButton("Arrange") { fabMenu = false; editing = true }
                             CogButton("Presets") { fabMenu = false; presetDialog = true }
-                            CogButton("Theme") { fabMenu = false; themeDialog = true }
+                            CogButton("Metal") {
+                                val next = Palettes[(Palettes.indexOf(Steam.palette) + 1) % Palettes.size]
+                                Steam.choose(ctx, next)
+                                Toast.makeText(ctx, next.name, Toast.LENGTH_SHORT).show()
+                            }
                             CogButton("Settings") { fabMenu = false; settings = true }
                             CogButton("Close") { fabMenu = false }
                         }
@@ -1294,84 +1329,6 @@ fun LauncherRoot(tick: Int, homeSignal: Int, active: Boolean = true) {
         }
 
         // Theme and gear speed
-        if (themeDialog) {
-            Dialog(onDismissRequest = { themeDialog = false }) {
-                RivetedPanel(Modifier.fillMaxWidth()) {
-                    Column(
-                        Modifier.fillMaxWidth().heightIn(max = 600.dp).verticalScroll(rememberScrollState()),
-                        verticalArrangement = Arrangement.spacedBy(12.dp),
-                    ) {
-                        Text("THEME, FONT AND WALLPAPER", style = MaterialTheme.typography.titleLarge, color = Steam.BrassLight)
-                        Text("Pick a metal. The whole home screen changes at once.", style = MaterialTheme.typography.labelLarge, color = Steam.Steam)
-                        Palettes.chunked(4).forEach { rowOfFour ->
-                            Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceEvenly) {
-                                rowOfFour.forEach { p -> ThemeSwatch(p, p === Steam.palette) { Steam.choose(ctx, p) } }
-                            }
-                        }
-                        Text("Gear speed", style = MaterialTheme.typography.titleMedium, color = Steam.Parchment)
-                        Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-                            SpeedChip("Slow", Steam.gearFactor == 1.8f, Modifier.weight(1f)) { Steam.setGear(ctx, 1.8f) }
-                            SpeedChip("Normal", Steam.gearFactor == 1f, Modifier.weight(1f)) { Steam.setGear(ctx, 1f) }
-                            SpeedChip("Fast", Steam.gearFactor == 0.5f, Modifier.weight(1f)) { Steam.setGear(ctx, 0.5f) }
-                        }
-                        Text("Nixie glow", style = MaterialTheme.typography.titleMedium, color = Steam.Parchment)
-                        CogRow {
-                            NixieColors.forEach { c -> NixieSwatch(c, Steam.nixie === c) { Steam.chooseNixie(ctx, c) } }
-                        }
-                        Text("Font", style = MaterialTheme.typography.titleMedium, color = Steam.Parchment)
-                        Text("The Brassworks, est. 1887 · 0123456789", fontSize = 16.sp, fontFamily = Steam.font, color = Steam.BrassLight)
-                        Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-                            SpeedChip("Classic", Steam.fontKey == "classic", Modifier.weight(1f)) { Steam.chooseFont(ctx, "classic") }
-                            SpeedChip("Victorian", Steam.fontKey == "victorian", Modifier.weight(1f)) {
-                                if (Steam.hasVictorian) {
-                                    Steam.chooseFont(ctx, "victorian")
-                                } else {
-                                    Toast.makeText(ctx, "The Victorian font is not in this build yet. See the README, or Upload your own.", Toast.LENGTH_LONG).show()
-                                }
-                            }
-                            SpeedChip("Script", Steam.fontKey == "script", Modifier.weight(1f)) { Steam.chooseFont(ctx, "script") }
-                        }
-                        Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-                            SpeedChip("Plain", Steam.fontKey == "plain", Modifier.weight(1f)) { Steam.chooseFont(ctx, "plain") }
-                            SpeedChip("Typewriter", Steam.fontKey == "typewriter", Modifier.weight(1f)) { Steam.chooseFont(ctx, "typewriter") }
-                            SpeedChip(if (Steam.hasCustomFont) "Your font" else "Custom", Steam.fontKey == "custom", Modifier.weight(1f)) {
-                                if (Steam.hasCustomFont) Steam.chooseFont(ctx, "custom") else pickFont.launch(arrayOf("*/*"))
-                            }
-                        }
-                        Text(
-                            "Victorian is Old Standard TT (SIL Open Font Licence). Upload adds a .ttf or .otf of your own, such as IM Fell English or Cinzel. Find opens Google Fonts.",
-                            style = MaterialTheme.typography.labelLarge, color = Steam.Steam,
-                        )
-                        CogRow {
-                            CogButton("Upload") { pickFont.launch(arrayOf("*/*")) }
-                            CogButton("Find") { open(ctx, Intent(Intent.ACTION_VIEW, Uri.parse("https://fonts.google.com/?query=victorian"))) }
-                            if (Steam.hasCustomFont) CogButton("Remove") { Steam.removeCustomFont(ctx) }
-                        }
-                        Text("Wallpaper", style = MaterialTheme.typography.titleMedium, color = Steam.Parchment)
-                        Text(
-                            if (Steam.hasWallpaper) "Darken the picture so your widgets stay easy to read."
-                            else "Pick a picture to show behind your widgets and the archive.",
-                            style = MaterialTheme.typography.labelLarge, color = Steam.Steam,
-                        )
-                        if (Steam.hasWallpaper) {
-                            Slider(
-                                value = Steam.wallDim,
-                                onValueChange = { Steam.setDim(ctx, it) },
-                                valueRange = 0f..0.85f,
-                                colors = SliderDefaults.colors(
-                                    thumbColor = Steam.BrassLight, activeTrackColor = Steam.Brass, inactiveTrackColor = Steam.Soot,
-                                ),
-                            )
-                        }
-                        CogRow {
-                            CogButton("Picture") { pickWall.launch(arrayOf("image/*")) }
-                            if (Steam.hasWallpaper) CogButton("Clear") { Steam.removeWallpaper(ctx) }
-                        }
-                        CogRow { CogButton("Close") { themeDialog = false } }
-                    }
-                }
-            }
-        }
 
         // Import a shared layout code
         if (importDialog) {
@@ -1499,48 +1456,185 @@ fun LauncherRoot(tick: Int, homeSignal: Int, active: Boolean = true) {
             }
         }
 
-        if (settings) {
-            Dialog(onDismissRequest = { settings = false }) {
-                RivetedPanel(Modifier.fillMaxWidth()) {
-                    Column(Modifier.fillMaxWidth(), verticalArrangement = Arrangement.spacedBy(12.dp)) {
-                        Text("SETTINGS", style = MaterialTheme.typography.titleLarge, color = Steam.BrassLight)
-                        Row(verticalAlignment = Alignment.CenterVertically) {
-                            Column(Modifier.weight(1f)) {
-                                Text("Turning gears", style = MaterialTheme.typography.titleMedium, color = Steam.Parchment)
-                                Text("Turn off to save battery", style = MaterialTheme.typography.labelLarge, color = Steam.Steam)
-                            }
-                            Switch(
-                                checked = animations,
-                                onCheckedChange = { animations = it; prefs.edit().putBoolean("anim", it).apply() },
-                                colors = SwitchDefaults.colors(
-                                    checkedThumbColor = Steam.BrassLight, checkedTrackColor = Steam.BrassDark,
-                                    uncheckedThumbColor = Steam.Steam, uncheckedTrackColor = Steam.Soot,
-                                ),
-                            )
-                        }
-                        Row(verticalAlignment = Alignment.CenterVertically) {
-                            Column(Modifier.weight(1f)) {
-                                Text("Fixed grid", style = MaterialTheme.typography.titleMedium, color = Steam.Parchment)
-                                Text("Widgets snap into place and cannot overlap. Off lets them float anywhere.", style = MaterialTheme.typography.labelLarge, color = Steam.Steam)
-                            }
-                            Switch(
-                                checked = board.gridMode,
-                                onCheckedChange = { board.useGrid(it) },
-                                colors = SwitchDefaults.colors(
-                                    checkedThumbColor = Steam.BrassLight, checkedTrackColor = Steam.BrassDark,
-                                    uncheckedThumbColor = Steam.Steam, uncheckedTrackColor = Steam.Soot,
-                                ),
-                            )
-                        }
-                        Text("Home sets your default home app. Device opens Android settings. Hidden lists apps you hid.", style = MaterialTheme.typography.labelLarge, color = Steam.Steam)
-                        CogRow {
-                            CogButton("Home") { open(ctx, Intent(Settings.ACTION_HOME_SETTINGS)) }
-                            CogButton("Device") { open(ctx, Intent(Settings.ACTION_SETTINGS)) }
-                            CogButton("Hidden") { settings = false; hiddenDialog = true }
-                            CogButton("Close") { settings = false }
+    }
+}
+
+/** One titled panel on the Settings screen. */
+@Composable
+private fun SettingsSection(title: String, content: @Composable ColumnScope.() -> Unit) {
+    RivetedPanel(Modifier.fillMaxWidth()) {
+        Column(Modifier.fillMaxWidth(), verticalArrangement = Arrangement.spacedBy(12.dp)) {
+            Text(title.uppercase(), style = MaterialTheme.typography.titleLarge, color = Steam.BrassLight)
+            content()
+        }
+    }
+}
+
+@Composable
+private fun SettingSwitch(title: String, note: String, checked: Boolean, onChecked: (Boolean) -> Unit) {
+    Row(verticalAlignment = Alignment.CenterVertically) {
+        Column(Modifier.weight(1f)) {
+            Text(title, style = MaterialTheme.typography.titleMedium, color = Steam.Parchment)
+            Text(note, style = MaterialTheme.typography.labelLarge, color = Steam.Steam)
+        }
+        Switch(
+            checked = checked,
+            onCheckedChange = onChecked,
+            colors = SwitchDefaults.colors(
+                checkedThumbColor = Steam.BrassLight, checkedTrackColor = Steam.BrassDark,
+                uncheckedThumbColor = Steam.Steam, uncheckedTrackColor = Steam.Soot,
+            ),
+        )
+    }
+}
+
+/** Everything that used to be spread across the gear menu, in four sections: Look, Layout, Apps and System. */
+@Composable
+private fun SettingsScreen(
+    board: WidgetBoard,
+    animations: Boolean,
+    onAnimations: (Boolean) -> Unit,
+    onPickFont: () -> Unit,
+    onPickWall: () -> Unit,
+    onPresets: () -> Unit,
+    onShare: () -> Unit,
+    onImport: () -> Unit,
+    onHidden: () -> Unit,
+    onClose: () -> Unit,
+) {
+    val ctx = LocalContext.current
+    Box(Modifier.fillMaxSize()) {
+        SteamBackdrop()
+        Column(Modifier.fillMaxSize().statusBarsPadding().navigationBarsPadding().padding(horizontal = 16.dp, vertical = 12.dp)) {
+            Row(verticalAlignment = Alignment.CenterVertically) {
+                Text("SETTINGS", style = MaterialTheme.typography.headlineMedium, color = Steam.BrassLight, modifier = Modifier.weight(1f))
+                CogButton("Close", diameter = 68.dp, onClick = onClose)
+            }
+            Spacer(Modifier.height(10.dp))
+            Box(
+                Modifier.fillMaxWidth().height(4.dp).clip(RoundedCornerShape(2.dp))
+                    .background(Brush.horizontalGradient(listOf(Steam.BrassDark, Steam.BrassLight, Steam.BrassDark)))
+            )
+            Spacer(Modifier.height(14.dp))
+            Column(
+                Modifier.weight(1f).verticalScroll(rememberScrollState()),
+                verticalArrangement = Arrangement.spacedBy(16.dp),
+            ) {
+                // ---------------- Look ----------------
+                SettingsSection("Look") {
+                    Text("Metal", style = MaterialTheme.typography.titleMedium, color = Steam.Parchment)
+                    Palettes.chunked(4).forEach { rowOfFour ->
+                        Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceEvenly) {
+                            rowOfFour.forEach { p -> ThemeSwatch(p, p === Steam.palette) { Steam.choose(ctx, p) } }
                         }
                     }
+                    Text("Nixie glow", style = MaterialTheme.typography.titleMedium, color = Steam.Parchment)
+                    CogRow {
+                        NixieColors.forEach { c -> NixieSwatch(c, Steam.nixie === c) { Steam.chooseNixie(ctx, c) } }
+                    }
+                    Text("Gear speed", style = MaterialTheme.typography.titleMedium, color = Steam.Parchment)
+                    Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                        SpeedChip("Slow", Steam.gearFactor == 1.8f, Modifier.weight(1f)) { Steam.setGear(ctx, 1.8f) }
+                        SpeedChip("Normal", Steam.gearFactor == 1f, Modifier.weight(1f)) { Steam.setGear(ctx, 1f) }
+                        SpeedChip("Fast", Steam.gearFactor == 0.5f, Modifier.weight(1f)) { Steam.setGear(ctx, 0.5f) }
+                    }
+                    SettingSwitch("Turning gears", "Turn off to save battery", animations, onAnimations)
+                    Text("Font", style = MaterialTheme.typography.titleMedium, color = Steam.Parchment)
+                    Text("The Brassworks, est. 1887 · 0123456789", fontSize = 16.sp, fontFamily = Steam.font, color = Steam.BrassLight)
+                    Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                        SpeedChip("Classic", Steam.fontKey == "classic", Modifier.weight(1f)) { Steam.chooseFont(ctx, "classic") }
+                        SpeedChip("Victorian", Steam.fontKey == "victorian", Modifier.weight(1f)) {
+                            if (Steam.hasVictorian) {
+                                Steam.chooseFont(ctx, "victorian")
+                            } else {
+                                Toast.makeText(ctx, "The Victorian font is not in this build yet. See the README, or Upload your own.", Toast.LENGTH_LONG).show()
+                            }
+                        }
+                        SpeedChip("Script", Steam.fontKey == "script", Modifier.weight(1f)) { Steam.chooseFont(ctx, "script") }
+                    }
+                    Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                        SpeedChip("Plain", Steam.fontKey == "plain", Modifier.weight(1f)) { Steam.chooseFont(ctx, "plain") }
+                        SpeedChip("Typewriter", Steam.fontKey == "typewriter", Modifier.weight(1f)) { Steam.chooseFont(ctx, "typewriter") }
+                        SpeedChip(if (Steam.hasCustomFont) "Your font" else "Custom", Steam.fontKey == "custom", Modifier.weight(1f)) {
+                            if (Steam.hasCustomFont) Steam.chooseFont(ctx, "custom") else onPickFont()
+                        }
+                    }
+                    Text(
+                        "Victorian is Old Standard TT (SIL Open Font Licence). Upload adds a .ttf or .otf of your own, such as IM Fell English or Cinzel. Find opens Google Fonts.",
+                        style = MaterialTheme.typography.labelLarge, color = Steam.Steam,
+                    )
+                    CogRow {
+                        CogButton("Upload") { onPickFont() }
+                        CogButton("Find") { open(ctx, Intent(Intent.ACTION_VIEW, Uri.parse("https://fonts.google.com/?query=victorian"))) }
+                        if (Steam.hasCustomFont) CogButton("Remove") { Steam.removeCustomFont(ctx) }
+                    }
+                    Text("Wallpaper", style = MaterialTheme.typography.titleMedium, color = Steam.Parchment)
+                    Text(
+                        if (Steam.hasWallpaper) "Darken the picture so your widgets stay easy to read."
+                        else "Pick a picture to show behind your widgets and the archive.",
+                        style = MaterialTheme.typography.labelLarge, color = Steam.Steam,
+                    )
+                    if (Steam.hasWallpaper) {
+                        Slider(
+                            value = Steam.wallDim,
+                            onValueChange = { Steam.setDim(ctx, it) },
+                            valueRange = 0f..0.85f,
+                            colors = SliderDefaults.colors(
+                                thumbColor = Steam.BrassLight, activeTrackColor = Steam.Brass, inactiveTrackColor = Steam.Soot,
+                            ),
+                        )
+                    }
+                    CogRow {
+                        CogButton("Picture") { onPickWall() }
+                        if (Steam.hasWallpaper) CogButton("Clear") { Steam.removeWallpaper(ctx) }
+                    }
                 }
+
+                // ---------------- Layout ----------------
+                SettingsSection("Layout") {
+                    SettingSwitch(
+                        "Fixed grid", "Widgets snap into place and cannot overlap. Off lets them float anywhere.",
+                        board.gridMode,
+                    ) { board.useGrid(it) }
+                    Text(
+                        "Presets saves and applies layouts, and lets you rename or delete your own. Share sends your current layout as a text code. Import adds a code you received.",
+                        style = MaterialTheme.typography.labelLarge, color = Steam.Steam,
+                    )
+                    CogRow {
+                        CogButton("Presets") { onPresets() }
+                        CogButton("Share") { onShare() }
+                        CogButton("Import") { onImport() }
+                    }
+                }
+
+                // ---------------- Apps ----------------
+                SettingsSection("Apps") {
+                    Text(
+                        "Hidden lists the apps you hid from the archive. Open one from there, or long-press it and choose Show.",
+                        style = MaterialTheme.typography.labelLarge, color = Steam.Steam,
+                    )
+                    CogRow { CogButton("Hidden") { onHidden() } }
+                }
+
+                // ---------------- System ----------------
+                SettingsSection("System") {
+                    Text(
+                        "Home sets your default home app. Device opens Android settings. Access opens Brassworks' permissions.",
+                        style = MaterialTheme.typography.labelLarge, color = Steam.Steam,
+                    )
+                    CogRow {
+                        CogButton("Home") { open(ctx, Intent(Settings.ACTION_HOME_SETTINGS)) }
+                        CogButton("Device") { open(ctx, Intent(Settings.ACTION_SETTINGS)) }
+                        CogButton("Access") {
+                            open(ctx, Intent(Settings.ACTION_APPLICATION_DETAILS_SETTINGS, Uri.parse("package:" + ctx.packageName)))
+                        }
+                    }
+                    Text(
+                        "Brassworks 1.0. Victorian font: Old Standard TT, SIL Open Font Licence.",
+                        style = MaterialTheme.typography.labelLarge, color = Steam.Steam.copy(alpha = 0.7f),
+                    )
+                }
+                Spacer(Modifier.height(8.dp))
             }
         }
     }
