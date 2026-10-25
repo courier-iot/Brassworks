@@ -20,13 +20,19 @@ jobs:
           SETTINGS=$(find . -name settings.gradle.kts -not -path "./.git/*" | head -n 1)
           FONTS="$(dirname "$SETTINGS")/app/src/main/assets/fonts"
           mkdir -p "$FONTS"
+          # pinned to one exact version of the google/fonts repository so the file names cannot change under us
+          BASE="https://raw.githubusercontent.com/google/fonts/2796410152d4f9524b68ed46e69c1b60f8e0f7c3/ofl/oldstandardtt"
+          ok=1
           for f in OldStandard-Regular OldStandard-Bold OldStandard-Italic; do
-            if ! curl -fsSL "https://raw.githubusercontent.com/google/fonts/main/ofl/oldstandardtt/$f.ttf" -o "$FONTS/$f.ttf"; then
-              echo "Could not download $f, so the Victorian font will be skipped."
-              rm -f "$FONTS"/OldStandard-*.ttf
-              break
-            fi
+            curl -fsSL --retry 3 --retry-delay 2 "$BASE/$f.ttf" -o "$FONTS/$f.ttf" || { echo "Download failed for $f"; ok=0; }
+            if [ ! -s "$FONTS/$f.ttf" ] || [ "$(stat -c%s "$FONTS/$f.ttf")" -lt 20000 ]; then ok=0; fi
           done
+          if [ "$ok" = 1 ]; then
+            echo "Victorian font downloaded."
+          else
+            echo "::warning::The Victorian font could not be downloaded, so this build has no Victorian font."
+            rm -f "$FONTS"/OldStandard-*.ttf
+          fi
           ls -la "$FONTS"
       - name: Build
         run: |
