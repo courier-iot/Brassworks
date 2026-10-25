@@ -447,6 +447,7 @@ enum class WType(
     BAROMETER("Barometer", "Air pressure with a weather word", 164f, 140f, 110f, 110f, "Needs a pressure sensor, most phones have one"),
     MOON("Moon phase", "Tonight's moon and the next full moon", 164f, 164f, 110f, 110f, "Recommended: no permissions needed"),
     SUN("Solar phase", "Sunrise, sunset and the sun's path", 340f, 140f, 200f, 100f, "Asks for your rough location once"),
+    SOLAR("Solar system", "The planets where they really are today. Tap one to inspect it", 340f, 290f, 200f, 200f, "Recommended: no internet needed"),
     CHRONO("Chronometer", "Stopwatch with a lap. Keeps counting while you are away", 340f, 140f, 300f, 100f, "Recommended: a brass stopwatch"),
     ALMANAC("Almanac", "Month calendar with today marked", 340f, 280f, 200f, 200f, "Recommended: the month at a glance"),
     MEMO("Memorandum", "A notepad you can type in", 164f, 140f, 150f, 100f, "Recommended: jot things down fast"),
@@ -1547,7 +1548,7 @@ private fun SettingsScreen(
                             if (Steam.hasVictorian) {
                                 Steam.chooseFont(ctx, "victorian")
                             } else {
-                                Toast.makeText(ctx, "The Victorian font is not in this build yet. See the README, or Upload your own.", Toast.LENGTH_LONG).show()
+                                Toast.makeText(ctx, "This build has no Victorian font. Check the Fetch the Victorian font step in your GitHub build log, or Upload your own.", Toast.LENGTH_LONG).show()
                             }
                         }
                         SpeedChip("Script", Steam.fontKey == "script", Modifier.weight(1f)) { Steam.chooseFont(ctx, "script") }
@@ -1559,6 +1560,12 @@ private fun SettingsScreen(
                             if (Steam.hasCustomFont) Steam.chooseFont(ctx, "custom") else onPickFont()
                         }
                     }
+                    Text(
+                        if (Steam.hasVictorian) "Victorian font found in this build."
+                        else "Victorian font not found in this build. See the Fetch the Victorian font step in your GitHub build log, or use Upload.",
+                        style = MaterialTheme.typography.labelLarge,
+                        color = if (Steam.hasVictorian) Steam.Verdigris else Steam.Copper,
+                    )
                     Text(
                         "Victorian is Old Standard TT (SIL Open Font Licence). Upload adds a .ttf or .otf of your own, such as IM Fell English or Cinzel. Find opens Google Fonts.",
                         style = MaterialTheme.typography.labelLarge, color = Steam.Steam,
@@ -1908,6 +1915,7 @@ private fun WidgetBody(
             WType.BAROMETER -> BarometerContent()
             WType.MOON -> MoonContent(now)
             WType.SUN -> SunContent(now, is24, prefs)
+            WType.SOLAR -> SolarContent(now)
             WType.CHRONO -> ChronoContent(w.id, prefs)
             WType.ALMANAC -> AlmanacContent(now)
             WType.MEMO -> MemoContent(w.id, prefs, editing)
