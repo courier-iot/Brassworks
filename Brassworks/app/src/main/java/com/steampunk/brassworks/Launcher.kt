@@ -453,6 +453,7 @@ enum class WType(
     MEMO("Memorandum", "A notepad you can type in", 164f, 140f, 150f, 100f, "Recommended: jot things down fast"),
     SHELF("App shelf", "Apps you choose, one tap away", 340f, 130f, 110f, 100f, "Recommended: replaces the old dock"),
     FOLDER("Folder", "A named bundle of apps. Tap to open it", 164f, 150f, 110f, 110f, "Recommended: keeps related apps tidy"),
+    LINKS("Link folder", "A named bundle of web links. Tap to open it", 164f, 150f, 110f, 110f, "Recommended: bookmarks on your home screen"),
     PICKS("Chief Engineer's picks", "Apps you open most, learned on this phone", 340f, 210f, 110f, 100f, "Recommended: suggestions from your habits"),
 }
 
@@ -574,8 +575,51 @@ class WidgetBoard(private val prefs: SharedPreferences, land: Boolean = false) {
     val folderNames = mutableStateMapOf<Long, String>()
     val folderApps = mutableStateMapOf<Long, List<String>>()
 
+    /** Each Link folder widget has its own name and its own list of web links. */
+    val linkNames = mutableStateMapOf<Long, String>()
+    val linkItems = mutableStateMapOf<Long, List<WebLink>>()
+
     init {
         items?.filter { it.type == WType.FOLDER }?.forEach { loadFolder(it.id) }
+        items?.filter { it.type == WType.LINKS }?.forEach { loadLinks(it.id) }
+    }
+
+    private fun loadLinks(id: Long) {
+        linkNames[id] = prefs.getString("lname_$id", "Links") ?: "Links"
+        linkItems[id] = decodeLinks(prefs.getString("llinks_$id", null))
+    }
+
+    private fun saveLinks(id: Long) {
+        prefs.edit()
+            .putString("lname_$id", linkNames[id] ?: "Links")
+            .putString("llinks_$id", encodeLinks(linkItems[id].orEmpty()))
+            .apply()
+    }
+
+    fun addLink(id: Long, link: WebLink) {
+        linkItems[id] = linkItems[id].orEmpty() + link
+        saveLinks(id)
+    }
+
+    fun updateLink(id: Long, index: Int, link: WebLink) {
+        val cur = linkItems[id].orEmpty()
+        if (index in cur.indices) {
+            linkItems[id] = cur.mapIndexed { i, old -> if (i == index) link else old }
+            saveLinks(id)
+        }
+    }
+
+    fun removeLink(id: Long, index: Int) {
+        val cur = linkItems[id].orEmpty()
+        if (index in cur.indices) {
+            linkItems[id] = cur.filterIndexed { i, _ -> i != index }
+            saveLinks(id)
+        }
+    }
+
+    fun renameLinks(id: Long, name: String) {
+        linkNames[id] = name
+        saveLinks(id)
     }
 
     private fun loadFolder(id: Long) {
@@ -848,6 +892,11 @@ class WidgetBoard(private val prefs: SharedPreferences, land: Boolean = false) {
             folderApps[id] = emptyList()
             saveFolder(id)
         }
+        if (type == WType.LINKS) {
+            linkNames[id] = "Links"
+            linkItems[id] = emptyList()
+            saveLinks(id)
+        }
         persist()
         return id
     }
@@ -856,7 +905,9 @@ class WidgetBoard(private val prefs: SharedPreferences, land: Boolean = false) {
         items = items?.filter { it.id != id }
         folderNames.remove(id)
         folderApps.remove(id)
-        prefs.edit().remove("note_$id").remove("fname_$id").remove("fapps_$id").remove("chr_acc_$id").remove("chr_start_$id").remove("chr_lap_$id")
+        linkNames.remove(id)
+        linkItems.remove(id)
+        prefs.edit().remove("lname_$id").remove("llinks_$id").remove("note_$id").remove("fname_$id").remove("fapps_$id").remove("chr_acc_$id").remove("chr_start_$id").remove("chr_lap_$id")
             .remove("ch_run_$id").remove("ch_base_$id").remove("ch_acc_$id").remove("ch_lap_$id").apply()
         persist()
     }
@@ -961,6 +1012,7 @@ class WidgetBoard(private val prefs: SharedPreferences, land: Boolean = false) {
         val placed = tidyList(raw, true)
         items = placed
         placed.filter { it.type == WType.FOLDER }.forEach { if (it.id !in folderNames) loadFolder(it.id) }
+        placed.filter { it.type == WType.LINKS }.forEach { if (it.id !in linkNames) loadLinks(it.id) }
         persist()
         return raw.size - placed.size
     }
@@ -992,6 +1044,8 @@ fun LauncherRoot(tick: Int, homeSignal: Int, active: Boolean = true) {
     var picker by remember { mutableStateOf(false) }
     var editing by remember { mutableStateOf(false) }
     var openFolder by remember { mutableStateOf<Long?>(null) }
+    var openLinks by remember { mutableStateOf<Long?>(null) }
+    var linkEdit by remember { mutableStateOf<Pair<Long, Int>?>(null) }
     var menuFolder by remember { mutableStateOf<Long?>(null) }
     var folderPick by remember { mutableStateOf<AppInfo?>(null) }
     var presetDialog by remember { mutableStateOf(false) }
@@ -1016,7 +1070,7 @@ fun LauncherRoot(tick: Int, homeSignal: Int, active: Boolean = true) {
     // Pressing the Home button closes everything and returns to the main screen.
     LaunchedEffect(homeSignal) {
         drawer = false; menuApp = null; settings = false; fabMenu = false; picker = false; editing = false
-        openFolder = null; menuFolder = null; folderPick = null; presetDialog = false; saveDialog = false; hiddenDialog = false; importDialog = false; renameFrom = null
+        openFolder = null; openLinks = null; linkEdit = null; menuFolder = null; folderPick = null; presetDialog = false; saveDialog = false; hiddenDialog = false; importDialog = false; renameFrom = null
     }
     BackHandler(enabled = drawer || menuApp != null || settings || fabMenu || picker || editing || folderPick != null || openFolder != null) {
         when {
@@ -1082,6 +1136,7 @@ fun LauncherRoot(tick: Int, homeSignal: Int, active: Boolean = true) {
                     onLaunch = launch,
                     onLongPress = { menuApp = it; menuFolder = null },
                     onOpenFolder = { openFolder = it },
+                    onOpenLinks = { openLinks = it },
                     onFabTap = { drawer = true },
                     onFabHold = { fabMenu = true },
                     onEnterEdit = { editing = true },
@@ -1256,6 +1311,14 @@ fun LauncherRoot(tick: Int, homeSignal: Int, active: Boolean = true) {
                 onLongPress = { menuApp = it; menuFolder = fid },
                 onClose = { openFolder = null },
             )
+        }
+
+        // Link folder: the opened pop-up, and the add or edit form on top of it
+        openLinks?.let { lid ->
+            LinksDialog(id = lid, board = board, onEdit = { index -> linkEdit = lid to index }, onClose = { openLinks = null })
+        }
+        linkEdit?.let { (lid, index) ->
+            LinkEditDialog(board = board, folder = lid, index = index, onDone = { linkEdit = null })
         }
 
         // Hidden apps
@@ -1756,6 +1819,7 @@ private fun HomeScreen(
     onLaunch: (AppInfo) -> Unit,
     onLongPress: (AppInfo) -> Unit,
     onOpenFolder: (Long) -> Unit,
+    onOpenLinks: (Long) -> Unit,
     onFabTap: () -> Unit,
     onFabHold: () -> Unit,
     onEnterEdit: () -> Unit,
@@ -1807,7 +1871,7 @@ private fun HomeScreen(
             board.items.orEmpty().forEach { w ->
                 key(w.id) {
                     WidgetHost(w, board, editing) {
-                        WidgetBody(w, board, now, is24, battery, storage, apps, pinned, counts, hidden, prefs, editing, onLaunch, onLongPress, onOpenFolder)
+                        WidgetBody(w, board, now, is24, battery, storage, apps, pinned, counts, hidden, prefs, editing, onLaunch, onLongPress, onOpenFolder, onOpenLinks)
                     }
                 }
             }
@@ -1901,6 +1965,7 @@ private fun WidgetBody(
     onLaunch: (AppInfo) -> Unit,
     onLongPress: (AppInfo) -> Unit,
     onOpenFolder: (Long) -> Unit,
+    onOpenLinks: (Long) -> Unit,
 ) {
     RivetedPanel(Modifier.fillMaxSize(), padding = if (w.type == WType.NIXIE) 8.dp else 16.dp) {
         when (w.type) {
@@ -1929,6 +1994,10 @@ private fun WidgetBody(
                 board.folderNames[w.id] ?: "Folder",
                 board.folderApps[w.id].orEmpty().mapNotNull { p -> apps.firstOrNull { it.packageName == p } },
             ) { onOpenFolder(w.id) }
+            WType.LINKS -> LinksContent(
+                board.linkNames[w.id] ?: "Links",
+                board.linkItems[w.id].orEmpty(),
+            ) { onOpenLinks(w.id) }
             WType.PICKS -> AppRowContent(
                 "Chief Engineer's picks",
                 apps.filter { it.packageName !in hidden && (counts[it.packageName] ?: 0) > 0 }.sortedByDescending { counts[it.packageName] ?: 0 }.take(8),
@@ -2743,7 +2812,7 @@ private fun ChronoContent(id: Long, prefs: SharedPreferences) = BoxWithConstrain
 // ───────────────────────── Archive (app drawer) ─────────────────────────
 
 @Composable
-private fun steamFieldColors() = OutlinedTextFieldDefaults.colors(
+internal fun steamFieldColors() = OutlinedTextFieldDefaults.colors(
     focusedTextColor = Steam.Parchment, unfocusedTextColor = Steam.Parchment,
     focusedBorderColor = Steam.BrassLight, unfocusedBorderColor = Steam.Brass,
     cursorColor = Steam.BrassLight,
