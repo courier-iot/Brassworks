@@ -8,6 +8,11 @@ import androidx.compose.foundation.Image
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
 import androidx.compose.foundation.clickable
+import androidx.compose.foundation.gestures.detectDragGesturesAfterLongPress
+import androidx.compose.foundation.gestures.detectTapGestures
+import androidx.compose.ui.input.pointer.pointerInput
+import androidx.compose.runtime.mutableStateOf
+import androidx.compose.runtime.setValue
 import androidx.compose.foundation.interaction.MutableInteractionSource
 import androidx.compose.foundation.interaction.collectIsPressedAsState
 import androidx.compose.foundation.layout.*
@@ -263,24 +268,69 @@ fun AnalogClock(hour: Float, minute: Float, modifier: Modifier = Modifier) {
 }
 
 
-/** The single floating brass gear. Tap = workshop menu, press and hold = open the archive. */
-@OptIn(ExperimentalFoundationApi::class)
+/**
+ * The single floating brass gear. Tap = archive, double tap = workshop menu,
+ * press and hold, then drag = move it. onMove gives the drag in dp.
+ */
 @Composable
-fun SteamFab(onTap: () -> Unit, onHold: () -> Unit, modifier: Modifier = Modifier) {
-    val src = remember { MutableInteractionSource() }
-    val pressed by src.collectIsPressedAsState()
-    val scale by animateFloatAsState(if (pressed) 0.9f else 1f, label = "fab")
+fun SteamFab(
+    onTap: () -> Unit,
+    onDoubleTap: () -> Unit,
+    onMove: (dx: Float, dy: Float) -> Unit,
+    onMoveEnd: () -> Unit,
+    modifier: Modifier = Modifier,
+) {
+    var pressed by remember { mutableStateOf(false) }
+    var moving by remember { mutableStateOf(false) }
+    // A press-and-hold ends with a finger lift that would otherwise count as a tap.
+    val ignoreTapUntil = remember { LongArray(1) }
+    val tapNow by rememberUpdatedState(onTap)
+    val doubleNow by rememberUpdatedState(onDoubleTap)
+    val moveNow by rememberUpdatedState(onMove)
+    val endNow by rememberUpdatedState(onMoveEnd)
+    val scale by animateFloatAsState(if (moving) 1.15f else if (pressed) 0.9f else 1f, label = "fab")
     val haptic = LocalHapticFeedback.current
     Box(
         modifier
             .size(72.dp)
+            // gestures sit before the scaling so a drag follows the finger exactly
+            .pointerInput(Unit) {
+                detectTapGestures(
+                    onPress = {
+                        pressed = true
+                        tryAwaitRelease()
+                        pressed = false
+                    },
+                    onDoubleTap = { if (System.currentTimeMillis() >= ignoreTapUntil[0]) doubleNow() },
+                    onTap = { if (System.currentTimeMillis() >= ignoreTapUntil[0]) tapNow() },
+                )
+            }
+            .pointerInput(Unit) {
+                detectDragGesturesAfterLongPress(
+                    onDragStart = {
+                        ignoreTapUntil[0] = Long.MAX_VALUE
+                        moving = true
+                        haptic.performHapticFeedback(HapticFeedbackType.LongPress)
+                    },
+                    onDragEnd = {
+                        ignoreTapUntil[0] = System.currentTimeMillis() + 500L
+                        moving = false
+                        endNow()
+                    },
+                    onDragCancel = {
+                        ignoreTapUntil[0] = System.currentTimeMillis() + 500L
+                        moving = false
+                        endNow()
+                    },
+                    onDrag = { change, drag ->
+                        change.consume()
+                        moveNow(drag.x.toDp().value, drag.y.toDp().value)
+                    },
+                )
+            }
             .graphicsLayer { scaleX = scale; scaleY = scale }
-            .shadow(10.dp, CircleShape)
-            .clip(CircleShape)
-            .combinedClickable(
-                interactionSource = src, indication = null, onClick = onTap,
-                onLongClick = { haptic.performHapticFeedback(HapticFeedbackType.LongPress); onHold() },
-            ),
+            .shadow(if (moving) 20.dp else 10.dp, CircleShape)
+            .clip(CircleShape),
         contentAlignment = Alignment.Center,
     ) {
         Canvas(Modifier.fillMaxSize()) {
