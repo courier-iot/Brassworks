@@ -149,14 +149,15 @@ fun RivetedPanel(
     modifier: Modifier = Modifier,
     onClick: (() -> Unit)? = null,
     padding: Dp = 16.dp,
+    fillAlpha: Float = 1f, // 1 = solid; lower lets the wallpaper show through the panel
     content: @Composable BoxScope.() -> Unit,
 ) {
     val shape = RoundedCornerShape(10.dp)
     Box(
         modifier
-            .shadow(6.dp, shape)
+            .then(if (fillAlpha >= 0.99f) Modifier.shadow(6.dp, shape) else Modifier)
             .clip(shape)
-            .background(Brush.verticalGradient(listOf(Steam.Walnut, Steam.Leather)))
+            .background(Brush.verticalGradient(listOf(Steam.Walnut.copy(alpha = fillAlpha), Steam.Leather.copy(alpha = fillAlpha))))
             .border(3.dp, Brush.verticalGradient(listOf(Steam.BrassLight, Steam.Brass, Steam.BrassDark)), shape)
             .then(if (onClick != null) Modifier.clickable(onClick = onClick) else Modifier)
             .drawBehind {

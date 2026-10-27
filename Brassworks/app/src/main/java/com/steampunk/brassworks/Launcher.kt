@@ -35,6 +35,7 @@ import androidx.activity.compose.BackHandler
 import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.result.contract.ActivityResultContracts
 import androidx.compose.animation.AnimatedVisibility
+import androidx.compose.animation.core.Animatable
 import androidx.compose.animation.core.LinearEasing
 import androidx.compose.animation.core.animateFloatAsState
 import androidx.compose.animation.core.tween
@@ -50,6 +51,7 @@ import androidx.compose.foundation.clickable
 import androidx.compose.foundation.interaction.MutableInteractionSource
 import androidx.compose.foundation.combinedClickable
 import androidx.compose.foundation.gestures.detectDragGestures
+import androidx.compose.foundation.gestures.detectHorizontalDragGestures
 import androidx.compose.foundation.gestures.detectTapGestures
 import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.lazy.grid.GridCells
@@ -84,6 +86,7 @@ import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.ImageBitmap
 import androidx.compose.ui.graphics.SolidColor
 import androidx.compose.ui.graphics.asImageBitmap
+import androidx.compose.ui.graphics.graphicsLayer
 import androidx.compose.ui.input.pointer.pointerInput
 import androidx.compose.ui.focus.FocusManager
 import androidx.compose.ui.focus.FocusRequester
@@ -489,6 +492,9 @@ data class Preset(val name: String, val items: List<PresetItem>, val builtin: Bo
 
 private const val AUTO_PRESET = "Previous layout"
 
+/** The most home pages you can have. */
+private const val MAX_PAGES = 8
+
 private val BUILTIN_PRESETS = listOf(
     Preset("Classic", listOf(
         PresetItem(WType.CLOCK, 0, 0, 4, 2), PresetItem(WType.BOILER, 0, 2, 2, 2),
@@ -551,7 +557,15 @@ class WidgetBoard(private val prefs: SharedPreferences, land: Boolean = false) {
     /** Portrait and landscape each keep their own layout, so rotating never piles the widgets up. */
     private var landscape = land
     private var reflow = false // this orientation has no layout of its own yet
-    private fun layoutKey(l: Boolean) = if (l) "widgets_land" else "widgets_v1"
+
+    /** Which home page is showing (0 is the first) and how many pages there are. Page 0 keeps the original save keys. */
+    var page by mutableIntStateOf(0)
+        private set
+    var pageCount by mutableIntStateOf(maxOf(1, prefs.getInt("pages", 1)))
+        private set
+
+    private fun layoutKey(l: Boolean, p: Int = page) =
+        (if (l) "widgets_land" else "widgets_v1") + (if (p == 0) "" else "_p$p")
     private fun loadFor(l: Boolean): List<WidgetItem>? {
         val own = decode(prefs.getString(layoutKey(l), null))
         if (own != null) return own
@@ -580,8 +594,15 @@ class WidgetBoard(private val prefs: SharedPreferences, land: Boolean = false) {
     val linkItems = mutableStateMapOf<Long, List<WebLink>>()
 
     init {
-        items?.filter { it.type == WType.FOLDER }?.forEach { loadFolder(it.id) }
-        items?.filter { it.type == WType.LINKS }?.forEach { loadLinks(it.id) }
+        loadExtras(items.orEmpty())
+    }
+
+    /** Reads in the folder and link-folder contents for any of these widgets that are not loaded yet. */
+    private fun loadExtras(list: List<WidgetItem>) {
+        list.forEach {
+            if (it.type == WType.FOLDER && it.id !in folderNames) loadFolder(it.id)
+            if (it.type == WType.LINKS && it.id !in linkNames) loadLinks(it.id)
+        }
     }
 
     private fun loadLinks(id: Long) {
@@ -776,6 +797,118 @@ class WidgetBoard(private val prefs: SharedPreferences, land: Boolean = false) {
         return keep + added
     }
 
+    // ----- per-widget settings -----
+
+    val widgetSettings = mutableStateMapOf<Long, WidgetSettings>()
+
+    fun settingsOf(id: Long): WidgetSettings =
+        widgetSettings[id] ?: decodeSettings(prefs.getString("wset_$id", null))
+
+    fun setSettings(id: Long, s: WidgetSettings) {
+        widgetSettings[id] = s
+        prefs.edit().putString("wset_$id", encodeSettings(s)).apply()
+    }
+
+    // ----- pages -----
+
+    /** The orientation a page was last saved in. Its widget list is the freshest one. */
+    private fun lastOrientation(p: Int) = prefs.getBoolean("lo_$p", false)
+
+    private fun savedPage(p: Int): List<WidgetItem> =
+        (decode(prefs.getString(layoutKey(landscape, p), null)) ?: decode(prefs.getString(layoutKey(!landscape, p), null))).orEmpty()
+
+    /** Reads the current page for the current orientation, re-fitting it if it was last used the other way round. */
+    private fun loadPage(): List<WidgetItem> {
+        reflow = false
+        val own = decode(prefs.getString(layoutKey(landscape), null))
+        val other = decode(prefs.getString(layoutKey(!landscape), null))
+        if (own == null) return if (other == null) emptyList() else tidyList(other, false)
+        if (other != null && lastOrientation(page) != landscape) return syncWith(own, other)
+        return own
+    }
+
+    fun goToPage(p: Int) {
+        if (p == page || p !in 0 until pageCount || areaW <= 0f) return
+        persist()
+        page = p
+        val list = loadPage()
+        items = list
+        loadExtras(list)
+        persist()
+    }
+
+    /** Adds an empty page at the end and goes to it. Returns its number, or -1 if the limit is reached. */
+    fun addPage(): Int {
+        if (pageCount >= MAX_PAGES) return -1
+        pageCount += 1
+        prefs.edit().putInt("pages", pageCount).apply()
+        goToPage(pageCount - 1)
+        return pageCount - 1
+    }
+
+    fun widgetsOnPage(p: Int): Int = if (p == page) items?.size ?: 0 else savedPage(p).size
+
+    /** Deletes the page you are on, with its widgets, and slides the later pages down. */
+    fun removeCurrentPage() {
+        if (pageCount <= 1) return
+        val gone = page
+        val ids = (items.orEmpty() + decode(prefs.getString(layoutKey(false), null)).orEmpty() +
+            decode(prefs.getString(layoutKey(true), null)).orEmpty()).map { it.id }.toSet()
+        ids.forEach { forget(it) }
+        val ed = prefs.edit()
+        for (q in gone until pageCount - 1) {
+            for (l in listOf(false, true)) {
+                val v = prefs.getString(layoutKey(l, q + 1), null)
+                if (v == null) ed.remove(layoutKey(l, q)) else ed.putString(layoutKey(l, q), v)
+            }
+            ed.putBoolean("lo_$q", prefs.getBoolean("lo_${q + 1}", false))
+        }
+        val last = pageCount - 1
+        ed.remove(layoutKey(false, last)).remove(layoutKey(true, last)).remove("lo_$last")
+        pageCount -= 1
+        ed.putInt("pages", pageCount).apply()
+        page = minOf(gone, pageCount - 1)
+        val list = loadPage()
+        items = list
+        loadExtras(list)
+        persist()
+    }
+
+    /** Moves a widget (keeping its notes and settings) to a free spot on another page. Returns false if that page is full. */
+    fun moveToPage(id: Long, target: Int): Boolean {
+        if (target == page || target !in 0 until pageCount) return false
+        val w = items?.firstOrNull { it.id == id } ?: return false
+        val targetList = (decode(prefs.getString(layoutKey(landscape, target), null))
+            ?: decode(prefs.getString(layoutKey(!landscape, target), null))?.let { tidyList(it, false) }).orEmpty()
+        val occ = newOcc()
+        markAll(occ, targetList)
+        var c = maxOf(colsOf(w.w), minColsOf(w.type))
+        var r = maxOf(rowsOf(w.h), minRowsOf(w.type))
+        var spot = occ.findSpot(c, r, 0, 0)
+        if (spot == null) {
+            c = minColsOf(w.type); r = minRowsOf(w.type)
+            spot = occ.findSpot(c, r, 0, 0)
+        }
+        if (spot == null) return false
+        val moved = targetList + place(w, spot.first, spot.second, c, r)
+        prefs.edit()
+            .putString(layoutKey(landscape, target), encode(moved))
+            .putBoolean("lo_$target", landscape)
+            .apply()
+        items = items?.filter { it.id != id }
+        persist()
+        return true
+    }
+
+    private fun everyWidget(): List<WidgetItem> =
+        (0 until pageCount).flatMap { p -> if (p == page) items.orEmpty() else savedPage(p) }
+
+    /** Every Folder widget on every page, for the Add to folder chooser. */
+    fun allFolders(): List<WidgetItem> = everyWidget().filter { it.type == WType.FOLDER }
+
+    /** Loads folder and link contents for every page, so a folder on another page can be edited safely. */
+    fun loadAllExtras() = loadExtras(everyWidget())
+
     // ----- first run / defaults -----
 
     fun ensureDefaults(land: Boolean) {
@@ -903,17 +1036,23 @@ class WidgetBoard(private val prefs: SharedPreferences, land: Boolean = false) {
 
     fun remove(id: Long) {
         items = items?.filter { it.id != id }
+        forget(id)
+        persist()
+    }
+
+    /** Throws away everything saved for one widget. */
+    private fun forget(id: Long) {
         folderNames.remove(id)
         folderApps.remove(id)
         linkNames.remove(id)
         linkItems.remove(id)
-        prefs.edit().remove("lname_$id").remove("llinks_$id").remove("note_$id").remove("fname_$id").remove("fapps_$id").remove("chr_acc_$id").remove("chr_start_$id").remove("chr_lap_$id")
+        widgetSettings.remove(id)
+        prefs.edit().remove("wset_$id").remove("lname_$id").remove("llinks_$id").remove("note_$id").remove("fname_$id").remove("fapps_$id").remove("chr_acc_$id").remove("chr_start_$id").remove("chr_lap_$id")
             .remove("ch_run_$id").remove("ch_base_$id").remove("ch_acc_$id").remove("ch_lap_$id").apply()
-        persist()
     }
 
     fun persist() {
-        items?.let { prefs.edit().putString(layoutKey(landscape), encode(it)).apply() }
+        items?.let { prefs.edit().putString(layoutKey(landscape), encode(it)).putBoolean("lo_$page", landscape).apply() }
     }
 
     // ----- presets -----
@@ -1048,6 +1187,11 @@ fun LauncherRoot(tick: Int, homeSignal: Int, active: Boolean = true) {
     var linkEdit by remember { mutableStateOf<Pair<Long, Int>?>(null) }
     var menuFolder by remember { mutableStateOf<Long?>(null) }
     var folderPick by remember { mutableStateOf<AppInfo?>(null) }
+    var pagesDialog by remember { mutableStateOf(false) }
+    var confirmRemovePage by remember { mutableStateOf(false) }
+    var widgetDialog by remember { mutableStateOf<Long?>(null) }
+    var creditsDialog by remember { mutableStateOf(false) }
+    var helpDialog by remember { mutableStateOf(false) }
     var presetDialog by remember { mutableStateOf(false) }
     var saveDialog by remember { mutableStateOf(false) }
     var hiddenDialog by remember { mutableStateOf(false) }
@@ -1071,6 +1215,8 @@ fun LauncherRoot(tick: Int, homeSignal: Int, active: Boolean = true) {
     LaunchedEffect(homeSignal) {
         drawer = false; menuApp = null; settings = false; fabMenu = false; picker = false; editing = false
         openFolder = null; openLinks = null; linkEdit = null; menuFolder = null; folderPick = null; presetDialog = false; saveDialog = false; hiddenDialog = false; importDialog = false; renameFrom = null
+        pagesDialog = false; confirmRemovePage = false; widgetDialog = null; creditsDialog = false; helpDialog = false
+        board.goToPage(0)
     }
     BackHandler(enabled = drawer || menuApp != null || settings || fabMenu || picker || editing || folderPick != null || openFolder != null) {
         when {
@@ -1139,6 +1285,8 @@ fun LauncherRoot(tick: Int, homeSignal: Int, active: Boolean = true) {
                     onOpenLinks = { openLinks = it },
                     onFabTap = { drawer = true },
                     onFabDoubleTap = { fabMenu = true },
+                    onWidgetSettings = { widgetDialog = it },
+                    overlayOpen = drawer || settings,
                     onEnterEdit = { editing = true },
                     onAdd = { picker = true },
                     onDone = { editing = false },
@@ -1170,6 +1318,8 @@ fun LauncherRoot(tick: Int, homeSignal: Int, active: Boolean = true) {
                         onShare = { shareLayout() },
                         onImport = { importDialog = true },
                         onHidden = { hiddenDialog = true },
+                        onCredits = { creditsDialog = true },
+                        onHelp = { helpDialog = true },
                         onClose = { settings = false },
                     )
                 }
@@ -1212,7 +1362,7 @@ fun LauncherRoot(tick: Int, homeSignal: Int, active: Boolean = true) {
                                 setPinned(if (onShelf) pinned - app.packageName else pinned + app.packageName)
                                 menuApp = null
                             }
-                            CogButton("Folder") { folderPick = app; menuApp = null }
+                            CogButton("Folder") { board.loadAllExtras(); folderPick = app; menuApp = null }
                             CogButton(if (isHidden) "Show" else "Hide") {
                                 setHiddenSet(if (isHidden) hidden - app.packageName else hidden + app.packageName)
                                 menuApp = null
@@ -1243,10 +1393,11 @@ fun LauncherRoot(tick: Int, homeSignal: Int, active: Boolean = true) {
                 RivetedPanel(Modifier.fillMaxWidth()) {
                     Column(Modifier.fillMaxWidth(), verticalArrangement = Arrangement.spacedBy(10.dp)) {
                         Text("THE WORKSHOP", style = MaterialTheme.typography.titleLarge, color = Steam.BrassLight)
-                        Text("Tap the gear to open the archive, double-tap it for this menu, and press and hold it, then drag, to move it. Arrange moves and resizes widgets and is where you add new ones, Presets saves and applies layouts, and Settings has everything else, including the metal.", style = MaterialTheme.typography.labelLarge, color = Steam.Steam)
+                        Text("Tap the gear to open the archive, double-tap it for this menu, and press and hold it, then drag, to move it. Arrange moves and resizes widgets and is where you add new ones, Presets saves and applies layouts, Pages adds and removes home pages, and Settings has everything else, including the metal.", style = MaterialTheme.typography.labelLarge, color = Steam.Steam)
                         CogRow {
                             CogButton("Arrange") { fabMenu = false; editing = true }
                             CogButton("Presets") { fabMenu = false; presetDialog = true }
+                            CogButton("Pages") { fabMenu = false; pagesDialog = true }
                             CogButton("Settings") { fabMenu = false; settings = true }
                             CogButton("Close") { fabMenu = false }
                         }
@@ -1257,7 +1408,7 @@ fun LauncherRoot(tick: Int, homeSignal: Int, active: Boolean = true) {
 
         // Folder: choose which folder an app goes into
         folderPick?.let { app ->
-            val folders = board.items.orEmpty().filter { it.type == WType.FOLDER }
+            val folders = board.allFolders()
             Dialog(onDismissRequest = { folderPick = null }) {
                 RivetedPanel(Modifier.fillMaxWidth()) {
                     Column(Modifier.fillMaxWidth(), verticalArrangement = Arrangement.spacedBy(10.dp)) {
@@ -1354,7 +1505,7 @@ fun LauncherRoot(tick: Int, homeSignal: Int, active: Boolean = true) {
                     Column(Modifier.fillMaxWidth(), verticalArrangement = Arrangement.spacedBy(10.dp)) {
                         Text("PRESETS", style = MaterialTheme.typography.titleLarge, color = Steam.BrassLight)
                         Text(
-                            "Tap a preset to apply it. Your current layout is kept as Previous layout. Tap the pencil to rename one of yours. Save stores your layout, Share sends it as a text code, Import adds a code you received.",
+                            "Tap a preset to apply it to this page. Your current layout is kept as Previous layout. Tap the pencil to rename one of yours. Save stores your layout, Share sends it as a text code, Import adds a code you received.",
                             style = MaterialTheme.typography.labelLarge, color = Steam.Steam,
                         )
                         Column(
@@ -1486,6 +1637,79 @@ fun LauncherRoot(tick: Int, homeSignal: Int, active: Boolean = true) {
             }
         }
 
+        // Pages
+        if (pagesDialog) {
+            Dialog(onDismissRequest = { pagesDialog = false }) {
+                RivetedPanel(Modifier.fillMaxWidth()) {
+                    Column(Modifier.fillMaxWidth(), verticalArrangement = Arrangement.spacedBy(10.dp)) {
+                        Text("PAGES", style = MaterialTheme.typography.titleLarge, color = Steam.BrassLight)
+                        Text(
+                            "Swipe left or right on the home screen to change page, or tap the dots at the bottom. Each page has its own widgets. " +
+                                "Pressing Home brings you back to page 1. Add, Arrange and Presets work on the page you are on.",
+                            style = MaterialTheme.typography.labelLarge, color = Steam.Steam,
+                        )
+                        Column(
+                            Modifier.heightIn(max = 300.dp).verticalScroll(rememberScrollState()),
+                            verticalArrangement = Arrangement.spacedBy(8.dp),
+                        ) {
+                            for (i in 0 until board.pageCount) {
+                                val n = board.widgetsOnPage(i)
+                                ChoiceRow(
+                                    "Page ${i + 1}" + (if (i == board.page) "  (you are here)" else ""),
+                                    "$n ${if (n == 1) "widget" else "widgets"}",
+                                ) { board.goToPage(i); pagesDialog = false }
+                            }
+                        }
+                        CogRow {
+                            CogButton("Add") {
+                                if (board.addPage() < 0) {
+                                    Toast.makeText(ctx, "That is the most pages you can have.", Toast.LENGTH_LONG).show()
+                                } else {
+                                    pagesDialog = false
+                                }
+                            }
+                            if (board.pageCount > 1) CogButton("Remove") { pagesDialog = false; confirmRemovePage = true }
+                            CogButton("Close") { pagesDialog = false }
+                        }
+                    }
+                }
+            }
+        }
+
+        // Pages: are you sure?
+        if (confirmRemovePage) {
+            val n = board.widgetsOnPage(board.page)
+            Dialog(onDismissRequest = { confirmRemovePage = false }) {
+                RivetedPanel(Modifier.fillMaxWidth()) {
+                    Column(Modifier.fillMaxWidth(), verticalArrangement = Arrangement.spacedBy(10.dp)) {
+                        Text("REMOVE PAGE", style = MaterialTheme.typography.titleLarge, color = Steam.BrassLight)
+                        Text(
+                            "Remove page ${board.page + 1}" + (if (n > 0) " and its $n ${if (n == 1) "widget" else "widgets"}" else "") +
+                                "? Notes, folders and links on it go too. This cannot be undone.",
+                            style = MaterialTheme.typography.bodyMedium, color = Steam.Parchment,
+                        )
+                        CogRow {
+                            CogButton("Remove") {
+                                board.removeCurrentPage()
+                                confirmRemovePage = false
+                                Toast.makeText(ctx, "Page removed", Toast.LENGTH_SHORT).show()
+                            }
+                            CogButton("Cancel") { confirmRemovePage = false }
+                        }
+                    }
+                }
+            }
+        }
+
+        // Settings for one widget (the cog in Arrange mode)
+        widgetDialog?.let { wid ->
+            val w = board.items.orEmpty().firstOrNull { it.id == wid }
+            if (w != null) WidgetSettingsDialog(w, board) { widgetDialog = null }
+        }
+
+        if (creditsDialog) CreditsDialog { creditsDialog = false }
+        if (helpDialog) HelpDialog { helpDialog = false }
+
         // Widget picker
         if (picker) {
             Dialog(onDismissRequest = { picker = false }) {
@@ -1558,6 +1782,8 @@ private fun SettingsScreen(
     onShare: () -> Unit,
     onImport: () -> Unit,
     onHidden: () -> Unit,
+    onCredits: () -> Unit,
+    onHelp: () -> Unit,
     onClose: () -> Unit,
 ) {
     val ctx = LocalContext.current
@@ -1694,6 +1920,14 @@ private fun SettingsScreen(
                         }
                     }
                     Text(
+                        "Help is a short guide to every gesture. Credits lists the licences and sources behind Brassworks.",
+                        style = MaterialTheme.typography.labelLarge, color = Steam.Steam,
+                    )
+                    CogRow {
+                        CogButton("Help") { onHelp() }
+                        CogButton("Credits") { onCredits() }
+                    }
+                    Text(
                         "Brassworks 1.0. Victorian font: Old Standard TT, SIL Open Font Licence.",
                         style = MaterialTheme.typography.labelLarge, color = Steam.Steam.copy(alpha = 0.7f),
                     )
@@ -1743,7 +1977,7 @@ private fun ThemeSwatch(p: Palette, selected: Boolean, onClick: () -> Unit) {
 }
 
 @Composable
-private fun SpeedChip(label: String, selected: Boolean, modifier: Modifier, onClick: () -> Unit) {
+internal fun SpeedChip(label: String, selected: Boolean, modifier: Modifier, onClick: () -> Unit) {
     val shape = RoundedCornerShape(8.dp)
     Box(
         modifier.clip(shape)
@@ -1816,6 +2050,8 @@ private fun HomeScreen(
     onOpenLinks: (Long) -> Unit,
     onFabTap: () -> Unit,
     onFabDoubleTap: () -> Unit,
+    onWidgetSettings: (Long) -> Unit,
+    overlayOpen: Boolean,
     onEnterEdit: () -> Unit,
     onAdd: () -> Unit,
     onDone: () -> Unit,
@@ -1839,8 +2075,27 @@ private fun HomeScreen(
         }
     }
     val storage = remember(tick) { storageUse() }
+    // A new Animatable per page, so the new page starts see-through in the very frame it appears and then fades in
+    val fade = remember(board.page) { Animatable(0f) }
+    LaunchedEffect(board.page) { fade.animateTo(1f, tween(200)) }
 
-    Box(Modifier.fillMaxSize()) {
+    Box(
+        Modifier.fillMaxSize().pointerInput(editing, overlayOpen, board.pageCount) {
+            // swipe left for the next page, right for the previous one
+            if (editing || overlayOpen || board.pageCount < 2) return@pointerInput
+            val threshold = 56.dp.toPx()
+            var total = 0f
+            detectHorizontalDragGestures(
+                onDragStart = { total = 0f },
+                onDragEnd = {
+                    if (total < -threshold) board.goToPage(board.page + 1)
+                    else if (total > threshold) board.goToPage(board.page - 1)
+                },
+                onDragCancel = { total = 0f },
+                onHorizontalDrag = { _, d -> total += d },
+            )
+        },
+    ) {
         SteamBackdrop()
         // Press and hold on empty space to rearrange widgets
         Box(Modifier.fillMaxSize().pointerInput(Unit) { detectTapGestures(onTap = { dropFocus(ctx, view, focus) }, onLongPress = { onEnterEdit() }) })
@@ -1866,10 +2121,30 @@ private fun HomeScreen(
                     }
                 }
             }
-            board.items.orEmpty().forEach { w ->
-                key(w.id) {
-                    WidgetHost(w, board, editing) {
-                        WidgetBody(w, board, now, is24, battery, storage, apps, pinned, counts, hidden, prefs, editing, onLaunch, onLongPress, onOpenFolder, onOpenLinks)
+            Box(Modifier.fillMaxSize().graphicsLayer { alpha = fade.value }) {
+                board.items.orEmpty().forEach { w ->
+                    key(w.id) {
+                        WidgetHost(w, board, editing, { onWidgetSettings(w.id) }) {
+                            WidgetBody(w, board, now, is24, battery, storage, apps, pinned, counts, hidden, prefs, editing, onLaunch, onLongPress, onOpenFolder, onOpenLinks)
+                        }
+                    }
+                }
+            }
+        }
+
+        // Page dots
+        if (board.pageCount > 1 && !editing) {
+            Row(
+                Modifier.align(Alignment.BottomCenter).navigationBarsPadding().padding(bottom = 2.dp),
+                verticalAlignment = Alignment.CenterVertically,
+            ) {
+                for (i in 0 until board.pageCount) {
+                    val here = i == board.page
+                    Box(Modifier.clickable { board.goToPage(i) }.padding(horizontal = 6.dp, vertical = 2.dp)) {
+                        Box(
+                            Modifier.size(if (here) 8.dp else 6.dp).clip(CircleShape)
+                                .background(if (here) Steam.BrassLight else Steam.Brass.copy(alpha = 0.45f)),
+                        )
                     }
                 }
             }
@@ -1910,7 +2185,7 @@ private fun HomeScreen(
 
 /** Positions one widget and, in edit mode, adds the move / resize / remove controls. */
 @Composable
-private fun WidgetHost(w: WidgetItem, board: WidgetBoard, editing: Boolean, content: @Composable () -> Unit) {
+private fun WidgetHost(w: WidgetItem, board: WidgetBoard, editing: Boolean, onSettings: () -> Unit, content: @Composable () -> Unit) {
     val wd = if (board.areaW > 0f) w.w.coerceAtMost(board.areaW) else w.w
     val ht = if (board.areaH > 0f) w.h.coerceAtMost(board.areaH) else w.h
     val x = w.x.coerceIn(0f, maxOf(0f, board.areaW - wd))
@@ -1944,6 +2219,11 @@ private fun WidgetHost(w: WidgetItem, board: WidgetBoard, editing: Boolean, cont
                     .background(Steam.Copper).clickable { board.remove(w.id) },
                 contentAlignment = Alignment.Center,
             ) { Text("✕", color = Color.White, fontSize = 14.sp) }
+            Box(
+                Modifier.align(Alignment.TopEnd).padding(top = 6.dp, end = 42.dp).size(30.dp).clip(CircleShape)
+                    .background(Steam.Brass).clickable(onClick = onSettings),
+                contentAlignment = Alignment.Center,
+            ) { Text("⚙", color = Steam.Ink, fontSize = 15.sp) }
             Box(
                 Modifier.align(Alignment.BottomEnd).size(44.dp)
                     .pointerInput(w.id) {
@@ -1981,25 +2261,27 @@ private fun WidgetBody(
     onOpenFolder: (Long) -> Unit,
     onOpenLinks: (Long) -> Unit,
 ) {
-    RivetedPanel(Modifier.fillMaxSize(), padding = if (w.type == WType.NIXIE) 8.dp else 16.dp) {
+    val ws = board.settingsOf(w.id)
+    val is24w = when (ws.clock) { 12 -> false; 24 -> true; else -> is24 }
+    RivetedPanel(Modifier.fillMaxSize(), padding = if (w.type == WType.NIXIE) 8.dp else 16.dp, fillAlpha = ws.opacity) {
         when (w.type) {
-            WType.CLOCK -> NixieContent(now, is24)
-            WType.NIXIE -> NixiePlainContent(now, is24)
-            WType.ANALOG -> ClockContent(now, is24)
-            WType.DIGITAL -> DigitalContent(now, is24)
-            WType.BOILER -> GaugeContent(battery, true, "Boiler pressure", "${(battery * 100).toInt()}% charged")
-            WType.CARGO -> GaugeContent(storage.first, false, "Cargo hold", "${(storage.first * 100).toInt()}% full")
-            WType.ENGINE -> EngineRoomContent()
+            WType.CLOCK -> NixieContent(now, is24w)
+            WType.NIXIE -> NixiePlainContent(now, is24w)
+            WType.ANALOG -> ClockContent(now, is24w)
+            WType.DIGITAL -> DigitalContent(now, is24w)
+            WType.BOILER -> GaugeContent(battery, true, ws.title.ifBlank { "Boiler pressure" }, "${(battery * 100).toInt()}% charged")
+            WType.CARGO -> GaugeContent(storage.first, false, ws.title.ifBlank { "Cargo hold" }, "${(storage.first * 100).toInt()}% full")
+            WType.ENGINE -> EngineRoomContent(ws.fahrenheit)
             WType.COMPASS -> CompassContent()
-            WType.BAROMETER -> BarometerContent()
+            WType.BAROMETER -> BarometerContent(ws.title.ifBlank { "Barometer" })
             WType.MOON -> MoonContent(now)
-            WType.SUN -> SunContent(now, is24, prefs)
+            WType.SUN -> SunContent(now, is24w, prefs)
             WType.SOLAR -> SolarContent(now)
             WType.CHRONO -> ChronoContent(w.id, prefs)
             WType.ALMANAC -> AlmanacContent(now)
-            WType.MEMO -> MemoContent(w.id, prefs, editing)
+            WType.MEMO -> MemoContent(w.id, prefs, editing, ws.title.ifBlank { "Memorandum" })
             WType.SHELF -> AppRowContent(
-                "App shelf",
+                ws.title.ifBlank { "App shelf" },
                 pinned.mapNotNull { p -> apps.firstOrNull { it.packageName == p } },
                 "Long-press an app in the archive to add it here.",
                 onLaunch, onLongPress,
@@ -2013,7 +2295,7 @@ private fun WidgetBody(
                 board.linkItems[w.id].orEmpty(),
             ) { onOpenLinks(w.id) }
             WType.PICKS -> AppRowContent(
-                "Chief Engineer's picks",
+                ws.title.ifBlank { "Chief Engineer's picks" },
                 apps.filter { it.packageName !in hidden && (counts[it.packageName] ?: 0) > 0 }.sortedByDescending { counts[it.packageName] ?: 0 }.take(8),
                 "Open a few apps and I will learn which you favour.",
                 onLaunch, onLongPress, iconSize = 60.dp,
@@ -2156,7 +2438,7 @@ private fun shortRate(bps: Long): String = when {
 
 /** Three dials: memory in use, battery heat and network flow. Samples every two seconds while visible. */
 @Composable
-private fun EngineRoomContent() = BoxWithConstraints(Modifier.fillMaxSize()) {
+private fun EngineRoomContent(fahrenheit: Boolean = false) = BoxWithConstraints(Modifier.fillMaxSize()) {
     val ctx = LocalContext.current
     val mw = maxWidth
     val mh = maxHeight
@@ -2207,7 +2489,7 @@ private fun EngineRoomContent() = BoxWithConstraints(Modifier.fillMaxSize()) {
         EngineDial(Modifier.weight(1f), dial, mem, "Memory", "${(mem * 100).roundToInt()}% used")
         EngineDial(
             Modifier.weight(1f), dial, ((heat - 20f) / 40f).coerceIn(0f, 1f), "Heat",
-            if (heat < 0f) "n/a" else "${heat.roundToInt()}°C",
+            if (heat < 0f) "n/a" else if (fahrenheit) "${(heat * 9f / 5f + 32f).roundToInt()}°F" else "${heat.roundToInt()}°C",
         )
         EngineDial(
             Modifier.weight(1f), dial, flow, "Flow",
@@ -2273,7 +2555,7 @@ private fun AlmanacContent(now: LocalDateTime) = BoxWithConstraints(Modifier.fil
 }
 
 @Composable
-private fun MemoContent(id: Long, prefs: SharedPreferences, editing: Boolean) {
+private fun MemoContent(id: Long, prefs: SharedPreferences, editing: Boolean, title: String = "Memorandum") {
     val ctx = LocalContext.current
     val focus = LocalFocusManager.current
     val view = LocalView.current
@@ -2286,7 +2568,7 @@ private fun MemoContent(id: Long, prefs: SharedPreferences, editing: Boolean) {
     Column(Modifier.fillMaxSize()) {
         Row(verticalAlignment = Alignment.CenterVertically) {
             Text(
-                "Memorandum", style = MaterialTheme.typography.titleMedium, color = Steam.BrassLight,
+                title, style = MaterialTheme.typography.titleMedium, color = Steam.BrassLight,
                 fontSize = 14.sp, modifier = Modifier.weight(1f),
             )
             if (focused) {
@@ -2638,7 +2920,7 @@ private fun CompassContent() = BoxWithConstraints(Modifier.fillMaxSize()) {
 }
 
 @Composable
-private fun BarometerContent() {
+private fun BarometerContent(title: String = "Barometer") {
     val ctx = LocalContext.current
     val active = LocalActive.current
     var hpa by remember { mutableFloatStateOf(0f) }
@@ -2661,10 +2943,10 @@ private fun BarometerContent() {
     }
 
     if (!present) {
-        GaugeContent(0f, true, "Barometer", "no sensor")
+        GaugeContent(0f, true, title, "no sensor")
     } else {
         GaugeContent(
-            ((hpa - 950f) / 100f).coerceIn(0f, 1f), true, "Barometer",
+            ((hpa - 950f) / 100f).coerceIn(0f, 1f), true, title,
             if (hpa <= 0f) "reading..." else "${hpa.roundToInt()} hPa · ${weatherWord(hpa)}",
         )
     }
