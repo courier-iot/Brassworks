@@ -7,6 +7,10 @@
     <uses-permission android:name="android.permission.REQUEST_DELETE_PACKAGES" />
     <!-- Only used by the Solar phase widget, and only after you tap to allow it -->
     <uses-permission android:name="android.permission.ACCESS_COARSE_LOCATION" />
+    <!-- Only used by the Agenda widget, and only after you tap Allow. The calendar is read on the phone and goes nowhere -->
+    <uses-permission android:name="android.permission.READ_CALENDAR" />
+    <!-- Lets the Countdown widget ring with a notification. Asked once, the first time you start a timer or alarm -->
+    <uses-permission android:name="android.permission.POST_NOTIFICATIONS" />
 
     <application
         android:allowBackup="true"
@@ -34,6 +38,11 @@
                 <category android:name="android.intent.category.LAUNCHER" />
             </intent-filter>
         </activity>
+
+        <!-- Wakes up when a Countdown timer or alarm is due, so it can ring even if the launcher is closed -->
+        <receiver
+            android:name=".TimerReceiver"
+            android:exported="false" />
 
         <!-- Lets Brassworks appear under Notification access, so the Music player can show the current track.
              It does nothing on its own and never reads your notifications. -->
