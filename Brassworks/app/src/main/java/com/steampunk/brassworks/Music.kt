@@ -14,6 +14,7 @@ import android.service.notification.NotificationListenerService
 import android.view.KeyEvent
 import android.widget.Toast
 import androidx.compose.animation.core.LinearEasing
+import androidx.compose.animation.core.animateFloat
 import androidx.compose.animation.core.animateFloatAsState
 import androidx.compose.animation.core.infiniteRepeatable
 import androidx.compose.animation.core.rememberInfiniteTransition
@@ -177,10 +178,12 @@ fun MusicContent() {
     val onAllow = { openListenerSettings(ctx) }
 
     BoxWithConstraints(Modifier.fillMaxSize()) {
-        val strip = maxWidth >= 230.dp && maxWidth > maxHeight * 1.5f
+        val mw = maxWidth
+        val mh = maxHeight
+        val strip = mw >= 230.dp && mw > mh * 1.5f
         if (strip) {
             Row(Modifier.fillMaxSize(), verticalAlignment = Alignment.CenterVertically) {
-                RecordArt(Modifier.size(minOf(maxHeight, maxWidth * 0.3f)), st.playing, tint)
+                RecordArt(Modifier.size(minOf(mh, mw * 0.3f)), st.playing, tint)
                 Spacer(Modifier.width(14.dp))
                 Column(Modifier.weight(1f).fillMaxHeight(), verticalArrangement = Arrangement.Center) {
                     TrackText(st, lit, true, false, 16f, onAllow)
@@ -191,9 +194,9 @@ fun MusicContent() {
                 }
             }
         } else {
-            val tall = maxHeight >= 125.dp
+            val tall = mh >= 125.dp
             val textH = if (tall) 36.dp else 20.dp
-            val art = maxOf(minOf(maxHeight - 28.dp - textH - 4.dp - 18.dp, maxWidth), 30.dp)
+            val art = maxOf(minOf(mh - 28.dp - textH - 4.dp - 18.dp, mw), 30.dp)
             Column(Modifier.fillMaxSize(), horizontalAlignment = Alignment.CenterHorizontally, verticalArrangement = Arrangement.SpaceBetween) {
                 RecordArt(Modifier.size(art), st.playing, tint)
                 TrackText(st, lit, tall, true, 14f, onAllow)
