@@ -92,11 +92,12 @@ private val HELP = listOf(
     InfoSection(
         "Presets",
         "Workshop > Presets saves and applies layouts. A preset changes the page you are on, and your previous layout is kept so you can undo it. " +
-            "Share sends a layout as a text code and Import adds one you received.",
+            "A preset of yours can also save your colours and style and your wallpaper, using the switches when you save. " +
+            "Share sends a layout and its colours as a text code, never the wallpaper, and Import adds one you received.",
     ),
     InfoSection(
         "Settings",
-        "Workshop > Settings has the style (Steampunk or Dieselpunk), the metal, nixie glow, gear speed, font, wallpaper, the fixed grid and its size (Auto, 5 × 10 or 4 × 9), hidden apps and your default home app.",
+        "Workshop > Settings has the style (Steampunk or Dieselpunk), the metal, nixie glow, gear speed, font, wallpaper, your own mixed colours, the fixed grid and its size (Auto, 5 × 10 or 4 × 9), hidden apps and your default home app.",
     ),
 )
 

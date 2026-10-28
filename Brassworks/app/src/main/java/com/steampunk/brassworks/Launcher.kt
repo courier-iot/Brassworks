@@ -490,7 +490,7 @@ private fun decode(s: String?): List<WidgetItem>? {
 
 /** One widget slot in a preset, in grid cells (so it fits any screen width). */
 data class PresetItem(val type: WType, val col: Int, val row: Int, val cols: Int, val rows: Int, val id: Long = 0L)
-data class Preset(val name: String, val items: List<PresetItem>, val builtin: Boolean = false)
+data class Preset(val name: String, val items: List<PresetItem>, val builtin: Boolean = false, val look: Look? = null)
 
 private const val AUTO_PRESET = "Previous layout"
 
@@ -531,7 +531,9 @@ private fun encodePresets(list: List<Preset>): String = JSONArray().also { arr -
                     .put("cs", i.cols).put("rs", i.rows).put("id", i.id)
             )
         }
-        arr.put(JSONObject().put("name", p.name).put("items", its))
+        val o = JSONObject().put("name", p.name).put("items", its)
+        encodeLook(p.look)?.let { o.put("look", it) }
+        arr.put(o)
     }
 }.toString()
 
@@ -549,13 +551,14 @@ private fun decodePresets(s: String?): List<Preset> {
                     val t = WType.entries.firstOrNull { e -> e.name == x.getString("t") } ?: return@mapNotNull null
                     PresetItem(t, x.getInt("c"), x.getInt("r"), x.getInt("cs"), x.getInt("rs"), x.optLong("id", 0L))
                 },
+                look = decodeLook(o.optJSONObject("look")),
             )
         }
     } catch (e: Exception) { emptyList() }
 }
 
 /** Holds every widget's position and size (in dp), the grid rules, folders and presets. */
-class WidgetBoard(private val prefs: SharedPreferences, land: Boolean = false) {
+class WidgetBoard(private val prefs: SharedPreferences, land: Boolean = false, private val appCtx: Context) {
     /** Portrait and landscape each keep their own layout, so rotating never piles the widgets up. */
     private var landscape by mutableStateOf(land)
     private var reflow = false // this orientation has no layout of its own yet
@@ -1133,21 +1136,52 @@ class WidgetBoard(private val prefs: SharedPreferences, land: Boolean = false) {
         )
     }
 
+    /**
+     * The look as it is now. [colours] includes the style, metal, nixie colour and your own colours.
+     * [wall] includes the wallpaper (a private copy is kept) or, if there is none, a note to clear it.
+     */
+    private fun captureLook(colours: Boolean, wall: Boolean): Look? {
+        if (!colours && !wall) return null
+        val c = if (colours) Steam.currentColors() else null
+        val w: String? = if (wall) {
+            if (Steam.hasWallpaper) (Steam.copyWallpaperTo(appCtx, "pw_${System.currentTimeMillis()}.jpg") ?: "") else ""
+        } else {
+            null
+        }
+        return Look(c, w, Steam.wallDim)
+    }
+
+    private fun applyLook(l: Look) {
+        l.colors?.let { Steam.applyColors(appCtx, it) }
+        l.wall?.let { w ->
+            if (w.isEmpty()) Steam.removeWallpaper(appCtx) else Steam.useWallpaperFile(appCtx, w)
+            Steam.setDim(appCtx, l.dim)
+        }
+    }
+
+    /** Deletes saved preset wallpapers that no preset refers to any more. */
+    private fun sweepWallpapers() {
+        Steam.sweepPresetWallpapers(appCtx, userPresets.mapNotNull { it.look?.wall }.filter { it.isNotEmpty() }.toSet())
+    }
+
     private fun persistPresets() {
         prefs.edit().putString("presets_v1", encodePresets(userPresets)).apply()
     }
 
     /** Save the current layout under a name. Using an existing name updates that preset. */
-    fun savePreset(name: String) {
-        val p = snapshot(name) ?: return
+    fun savePreset(name: String, colours: Boolean = true, wall: Boolean = true, sweep: Boolean = true) {
+        val base = snapshot(name) ?: return
+        val p = base.copy(look = captureLook(colours, wall))
         userPresets = userPresets.filter { it.name != name } + p
         persistPresets()
+        if (sweep) sweepWallpapers()
     }
 
     /** A text code for the current layout. Send it to anyone and they can import it. Ids stay private to this phone. */
     fun exportCode(): String? {
         val p = snapshot("Shared layout") ?: return null
-        val clean = p.copy(items = p.items.map { it.copy(id = 0L) })
+        // colours and style travel with the code; a wallpaper picture never does
+        val clean = p.copy(items = p.items.map { it.copy(id = 0L) }, look = captureLook(true, false))
         val json = encodePresets(listOf(clean))
         return "BRASSWORKS1:" + Base64.encodeToString(json.toByteArray(Charsets.UTF_8), Base64.URL_SAFE or Base64.NO_WRAP)
     }
@@ -1168,7 +1202,7 @@ class WidgetBoard(private val prefs: SharedPreferences, land: Boolean = false) {
         var name = "Imported layout"
         var n = 2
         while (userPresets.any { it.name == name }) { name = "Imported layout $n"; n++ }
-        val imported = Preset(name, items)
+        val imported = Preset(name, items, false, sanitizeLook(p.look))
         userPresets = userPresets + imported
         persistPresets()
         return imported
@@ -1189,6 +1223,7 @@ class WidgetBoard(private val prefs: SharedPreferences, land: Boolean = false) {
     fun deletePreset(name: String) {
         userPresets = userPresets.filter { it.name != name }
         persistPresets()
+        sweepWallpapers()
     }
 
     /**
@@ -1212,13 +1247,15 @@ class WidgetBoard(private val prefs: SharedPreferences, land: Boolean = false) {
     }
 
     fun applyPreset(p: Preset): Int {
-        savePreset(AUTO_PRESET) // undo point
+        savePreset(AUTO_PRESET, sweep = false) // undo point, with today's colours and wallpaper too
         val raw = instantiate(p, items.orEmpty())
         val placed = tidyList(raw, true)
         items = placed
         placed.filter { it.type == WType.FOLDER }.forEach { if (it.id !in folderNames) loadFolder(it.id) }
         placed.filter { it.type == WType.LINKS }.forEach { if (it.id !in linkNames) loadLinks(it.id) }
         persist()
+        p.look?.let { applyLook(it) }
+        sweepWallpapers()
         return raw.size - placed.size
     }
 }
@@ -1230,7 +1267,7 @@ fun LauncherRoot(tick: Int, homeSignal: Int, active: Boolean = true) {
     val ctx = LocalContext.current
     val prefs = remember { ctx.getSharedPreferences("brassworks", Context.MODE_PRIVATE) }
     val land = LocalConfiguration.current.orientation == Configuration.ORIENTATION_LANDSCAPE
-    val board = remember { WidgetBoard(prefs, land) }
+    val board = remember { WidgetBoard(prefs, land, ctx.applicationContext) }
     val focusManager = LocalFocusManager.current
     val rootView = LocalView.current
     LaunchedEffect(homeSignal) { dropFocus(ctx, rootView, focusManager) }
@@ -1315,7 +1352,7 @@ fun LauncherRoot(tick: Int, homeSignal: Int, active: Boolean = true) {
         settings = false
         Toast.makeText(
             ctx,
-            "Applied ${p.name}" + (if (dropped > 0) ". $dropped widget(s) did not fit." else ""),
+            "Applied ${p.name}" + (if (p.look != null) " with its look" else "") + (if (dropped > 0) ". $dropped widget(s) did not fit." else ""),
             Toast.LENGTH_SHORT,
         ).show()
     }
@@ -1571,7 +1608,7 @@ fun LauncherRoot(tick: Int, homeSignal: Int, active: Boolean = true) {
                     Column(Modifier.fillMaxWidth(), verticalArrangement = Arrangement.spacedBy(10.dp)) {
                         Text("PRESETS", style = MaterialTheme.typography.titleLarge, color = Steam.BrassLight)
                         Text(
-                            "Tap a preset to apply it to this page. Your current layout is kept as Previous layout. Tap the pencil to rename one of yours. Save stores your layout, Share sends it as a text code, Import adds a code you received.",
+                            "Tap a preset to apply it to this page. Your current layout, colours and wallpaper are kept as Previous layout, so you can undo. A preset of yours can also carry your colours and style, and a wallpaper, which apply to the whole launcher. Tap the pencil to rename one. Share sends the layout and colours as a text code, never the wallpaper.",
                             style = MaterialTheme.typography.labelLarge, color = Steam.Steam,
                         )
                         Column(
@@ -1678,6 +1715,8 @@ fun LauncherRoot(tick: Int, homeSignal: Int, active: Boolean = true) {
         // Save the current layout as a preset
         if (saveDialog) {
             var name by remember { mutableStateOf("") }
+            var withColours by remember { mutableStateOf(true) }
+            var withWall by remember { mutableStateOf(true) }
             Dialog(onDismissRequest = { saveDialog = false }) {
                 RivetedPanel(Modifier.fillMaxWidth()) {
                     Column(Modifier.fillMaxWidth(), verticalArrangement = Arrangement.spacedBy(10.dp)) {
@@ -1687,11 +1726,21 @@ fun LauncherRoot(tick: Int, homeSignal: Int, active: Boolean = true) {
                             value = name, onValueChange = { name = it }, modifier = Modifier.fillMaxWidth(),
                             singleLine = true, placeholder = { Text("Preset name") }, colors = steamFieldColors(),
                         )
+                        SettingSwitch(
+                            "Save colours and style",
+                            "The style, metal and neon colour, including colours you mixed yourself.",
+                            withColours,
+                        ) { withColours = it }
+                        SettingSwitch(
+                            "Save wallpaper",
+                            if (Steam.hasWallpaper) "The picture behind your widgets, and how dark it is." else "No wallpaper is set, so applying this preset will clear any wallpaper.",
+                            withWall,
+                        ) { withWall = it }
                         CogRow {
                             CogButton("Save") {
                                 val n = name.trim()
                                 if (n.isNotEmpty()) {
-                                    board.savePreset(n)
+                                    board.savePreset(n, withColours, withWall)
                                     Toast.makeText(ctx, "Saved preset $n", Toast.LENGTH_SHORT).show()
                                     saveDialog = false
                                 }
@@ -1895,6 +1944,26 @@ private fun SettingsScreen(
                     CogRow {
                         NixieColors.forEach { c -> NixieSwatch(c, Steam.nixie === c) { Steam.chooseNixie(ctx, c) } }
                     }
+                    Text("Your own colours", style = MaterialTheme.typography.titleMedium, color = Steam.Parchment)
+                    Text(
+                        "Slide to mix your own. Metal and background make a Custom theme, and neon makes a Custom nixie glow. Presets can save them. In Dieselpunk the metal only tints the steel, so the neon is where your colour shows most.",
+                        style = MaterialTheme.typography.labelLarge, color = Steam.Steam,
+                    )
+                    var metalC by remember(Steam.palette.name) { mutableStateOf(Steam.palette.brass) }
+                    var woodC by remember(Steam.palette.name) { mutableStateOf(Steam.palette.walnut) }
+                    var neonC by remember(Steam.nixie.name) { mutableStateOf(Steam.nixie.glow) }
+                    ColourEditor(
+                        "Metal", Steam.palette.name, metalC, 0.15f, 1f, 0.35f, 1f,
+                        onChange = { metalC = it; Steam.applyCustomPalette(it, woodC) }, onDone = { Steam.saveCustom(ctx) },
+                    )
+                    ColourEditor(
+                        "Background", Steam.palette.name, woodC, 0f, 0.8f, 0.05f, 0.45f,
+                        onChange = { woodC = it; Steam.applyCustomPalette(metalC, it) }, onDone = { Steam.saveCustom(ctx) },
+                    )
+                    ColourEditor(
+                        "Neon", Steam.nixie.name, neonC, 0.3f, 1f, 0.6f, 1f,
+                        onChange = { neonC = it; Steam.applyCustomNeon(it) }, onDone = { Steam.saveCustom(ctx) },
+                    )
                     Text("Gear speed", style = MaterialTheme.typography.titleMedium, color = Steam.Parchment)
                     Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
                         SpeedChip("Slow", Steam.gearFactor == 1.8f, Modifier.weight(1f)) { Steam.setGear(ctx, 1.8f) }
@@ -2094,7 +2163,7 @@ private fun PresetRow(p: Preset, onDelete: (() -> Unit)?, onRename: (() -> Unit)
         Column(Modifier.weight(1f).clickable(onClick = onClick).padding(12.dp)) {
             Text(p.name, style = MaterialTheme.typography.titleMedium, color = Steam.BrassLight)
             Text(
-                "${p.items.size} widgets · " + (if (p.builtin) "Built in" else "Yours"),
+                "${p.items.size} widgets · " + (if (p.builtin) "Built in" else "Yours") + lookLabel(p.look).let { if (it.isEmpty()) "" else " · $it" },
                 style = MaterialTheme.typography.bodyMedium, color = Steam.Parchment,
             )
         }

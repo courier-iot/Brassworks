@@ -135,6 +135,55 @@ object Steam {
     /** True in the Dieselpunk style. */
     val punk: Boolean get() = style == "diesel"
 
+    // ----- your own colours -----
+
+    var customMetal by mutableStateOf(Color(0xFFB5883E))
+    var customWood by mutableStateOf(Color(0xFF3E2A1E))
+    var customNeon by mutableStateOf(Color(0xFFFFA24D))
+
+    /** Builds a whole palette from two colours you mix: the metal and the wood (the background). */
+    private fun customPalette(metal: Color, wood: Color) = Palette(
+        "Custom",
+        soot = lerp(wood, Color.Black, 0.65f), leather = lerp(wood, Color.Black, 0.35f), walnut = wood,
+        brass = metal, brassLight = lerp(metal, Color.White, 0.4f), brassDark = lerp(metal, Color.Black, 0.5f),
+        copper = Color(0xFFC25A30), verdigris = Color(0xFF58B09C),
+        parchment = Color(0xFFEBDDB8), ink = lerp(wood, Color.Black, 0.7f), steam = Color(0xFFCFC8B8),
+    )
+
+    private fun customNixie(neon: Color) = NixieColor("Custom", lerp(neon, Color.White, 0.35f), neon)
+
+    /** Live update while you slide. Call [saveCustom] when you let go. */
+    fun applyCustomPalette(metal: Color, wood: Color) {
+        customMetal = metal
+        customWood = wood
+        palette = customPalette(metal, wood)
+    }
+
+    fun applyCustomNeon(neon: Color) {
+        customNeon = neon
+        nixie = customNixie(neon)
+    }
+
+    fun saveCustom(ctx: Context) {
+        prefs(ctx).edit()
+            .putInt("cust_metal", customMetal.toArgb()).putInt("cust_wood", customWood.toArgb()).putInt("cust_neon", customNeon.toArgb())
+            .putString("theme", palette.name).putString("nixie", nixie.name).apply()
+    }
+
+    /** The style and colours as they are right now, for saving in a preset. */
+    fun currentColors() = LookColors(style, palette.name, nixie.name, customMetal.toArgb(), customWood.toArgb(), customNeon.toArgb())
+
+    /** Applies the colours and style from a preset. Your own custom colours are only replaced if the preset uses them. */
+    fun applyColors(ctx: Context, c: LookColors) {
+        if (c.metal == "Custom") { customMetal = Color(c.customMetal); customWood = Color(c.customWood) }
+        if (c.nixie == "Custom") customNeon = Color(c.customNeon)
+        style = if (c.style == "diesel") "diesel" else "steam"
+        palette = if (c.metal == "Custom") customPalette(customMetal, customWood) else Palettes.firstOrNull { it.name == c.metal } ?: palette
+        nixie = if (c.nixie == "Custom") customNixie(customNeon) else NixieColors.firstOrNull { it.name == c.nixie } ?: nixie
+        saveCustom(ctx)
+        prefs(ctx).edit().putString("style", style).apply()
+    }
+
     /** Multiplies how long a gear takes to turn: 1.8 is slow, 1 normal, 0.5 fast. */
     var gearFactor by mutableFloatStateOf(1f)
 
@@ -185,10 +234,15 @@ object Steam {
     /** Call once at start-up, before anything is drawn. */
     fun load(ctx: Context) {
         val p = prefs(ctx)
-        palette = Palettes.firstOrNull { it.name == p.getString("theme", "Brass") } ?: Palettes[0]
+        customMetal = Color(p.getInt("cust_metal", customMetal.toArgb()))
+        customWood = Color(p.getInt("cust_wood", customWood.toArgb()))
+        customNeon = Color(p.getInt("cust_neon", customNeon.toArgb()))
+        val themeName = p.getString("theme", "Brass")
+        palette = if (themeName == "Custom") customPalette(customMetal, customWood) else Palettes.firstOrNull { it.name == themeName } ?: Palettes[0]
         style = if (p.getString("style", "steam") == "diesel") "diesel" else "steam"
         gearFactor = p.getFloat("gear", 1f)
-        nixie = NixieColors.firstOrNull { it.name == p.getString("nixie", "Orange") } ?: NixieColors[0]
+        val nixieName = p.getString("nixie", "Orange")
+        nixie = if (nixieName == "Custom") customNixie(customNeon) else NixieColors.firstOrNull { it.name == nixieName } ?: NixieColors[0]
         fontKey = p.getString("font", "classic") ?: "classic"
         readCustomFont(ctx)
         readVictorian(ctx)
@@ -263,6 +317,40 @@ object Steam {
         } catch (e: Exception) {
             false
         }
+    }
+
+    private val presetWall = Regex("pw_\\d+\\.jpg")
+
+    /** Keeps a private copy of the current wallpaper for a preset. Returns the copy's name, or null if there is none. */
+    fun copyWallpaperTo(ctx: Context, name: String): String? = try {
+        val src = wallFile(ctx)
+        if (!src.exists() || !presetWall.matches(name)) {
+            null
+        } else {
+            src.copyTo(File(ctx.filesDir, name), overwrite = true)
+            name
+        }
+    } catch (e: Exception) {
+        null
+    }
+
+    /** Makes a preset's saved picture the wallpaper. Returns false if the picture is missing. */
+    fun useWallpaperFile(ctx: Context, name: String): Boolean = try {
+        val f = File(ctx.filesDir, name)
+        if (!presetWall.matches(name) || !f.exists()) {
+            false
+        } else {
+            f.copyTo(wallFile(ctx), overwrite = true)
+            readWallpaper(ctx)
+            wallpaper != null
+        }
+    } catch (e: Exception) {
+        false
+    }
+
+    /** Deletes saved preset pictures that no preset uses any more. */
+    fun sweepPresetWallpapers(ctx: Context, keep: Set<String>) {
+        ctx.filesDir.listFiles()?.filter { presetWall.matches(it.name) && it.name !in keep }?.forEach { it.delete() }
     }
 
     fun removeWallpaper(ctx: Context) {
