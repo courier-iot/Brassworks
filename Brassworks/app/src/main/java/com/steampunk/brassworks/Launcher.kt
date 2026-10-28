@@ -446,6 +446,7 @@ enum class WType(
     BOILER("Boiler pressure", "Battery level on a dial gauge", 164f, 140f, 110f, 110f, "Recommended: your charge at a glance"),
     CARGO("Cargo hold", "Storage used and free", 164f, 140f, 110f, 110f, "Recommended: spot a full phone early"),
     VIALS("Vials", "Glass tubes that fill left to right. You choose the readings", 340f, 120f, 150f, 70f, "Tap the cog in Arrange mode to choose the readings"),
+    MUSIC("Music player", "A neon record player with working controls. Resize it to change its shape", 340f, 120f, 150f, 120f, "Track names and progress need Notification access, granted once"),
     ENGINE("Engine room", "RAM, battery heat and network flow on three dials", 340f, 140f, 200f, 110f, "Recommended: see what is loading the phone"),
     COMPASS("Compass", "A brass compass card that turns as you do", 164f, 164f, 110f, 110f, "Recommended: a working compass, hold the phone flat"),
     BAROMETER("Barometer", "Air pressure with a weather word", 164f, 140f, 110f, 110f, "Needs a pressure sensor, most phones have one"),
@@ -1878,6 +1879,10 @@ private fun SettingsScreen(
                         }
                     }
                     Text("Nixie glow", style = MaterialTheme.typography.titleMedium, color = Steam.Parchment)
+                    Text(
+                        "Colours the nixie tubes and the neon of the Music player.",
+                        style = MaterialTheme.typography.labelLarge, color = Steam.Steam,
+                    )
                     CogRow {
                         NixieColors.forEach { c -> NixieSwatch(c, Steam.nixie === c) { Steam.chooseNixie(ctx, c) } }
                     }
@@ -2342,7 +2347,7 @@ private fun WidgetBody(
     val is24w = when (ws.clock) { 12 -> false; 24 -> true; else -> is24 }
     RivetedPanel(
         Modifier.fillMaxSize(),
-        padding = when (w.type) { WType.NIXIE -> 8.dp; WType.VIALS -> 14.dp; else -> 16.dp },
+        padding = when (w.type) { WType.NIXIE -> 8.dp; WType.VIALS, WType.MUSIC -> 14.dp; else -> 16.dp },
         fillAlpha = ws.opacity,
     ) {
         when (w.type) {
@@ -2353,6 +2358,7 @@ private fun WidgetBody(
             WType.BOILER -> GaugeContent(battery, true, ws.title.ifBlank { "Boiler pressure" }, "${(battery * 100).toInt()}% charged")
             WType.CARGO -> GaugeContent(storage.first, false, ws.title.ifBlank { "Cargo hold" }, "${(storage.first * 100).toInt()}% full")
             WType.VIALS -> VialsContent(ws.vials, ws.fahrenheit)
+            WType.MUSIC -> MusicContent()
             WType.ENGINE -> EngineRoomContent(ws.fahrenheit)
             WType.COMPASS -> CompassContent()
             WType.BAROMETER -> BarometerContent(ws.title.ifBlank { "Barometer" })

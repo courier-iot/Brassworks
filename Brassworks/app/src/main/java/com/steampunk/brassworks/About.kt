@@ -44,6 +44,11 @@ private val CREDITS = listOf(
         "Jetpack Compose, AndroidX and Material 3 by Google, used under the Apache License, Version 2.0.",
     ),
     InfoSection(
+        "Notification access",
+        "Used only by the Music player. It lets Brassworks read which track is playing, so it can show the title and progress. " +
+            "It reads only the media information and nothing else, and nothing leaves your phone. Play, pause, next and previous need no permission.",
+    ),
+    InfoSection(
         "Search",
         "If no app matches what you type in the Archive, you can search the web with DuckDuckGo. That happens in your browser, only when you tap.",
     ),
@@ -73,6 +78,11 @@ private val HELP = listOf(
         "The Archive",
         "Every app, filed under A, B, C. Type to search: it finds initials (\"gm\" finds Google Maps) and does sums (try 18*4+6). " +
             "Long-press an app to pin it, put it in a folder, hide it, see its info or uninstall it.",
+    ),
+    InfoSection(
+        "Music player",
+        "Add a Music player and resize it: wide and short is a strip, taller and narrower is a square card. " +
+            "The buttons control whatever music app is playing. For the track name and progress, tap the prompt on the widget and switch on Notification access once.",
     ),
     InfoSection(
         "Folders and links",

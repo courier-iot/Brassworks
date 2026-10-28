@@ -98,6 +98,23 @@ fun WidgetSettingsDialog(w: WidgetItem, board: WidgetBoard, onClose: () -> Unit)
                     }
                 }
 
+                if (w.type == WType.MUSIC) {
+                    Text("Neon colour", style = MaterialTheme.typography.titleMedium, color = Steam.Parchment)
+                    Text(
+                        "The neon follows your nixie colour. Change it in Settings > Look > Nixie glow. " +
+                            "Resize the widget to change its shape: wide and short is a strip, taller and narrower is a square card.",
+                        style = MaterialTheme.typography.labelLarge, color = Steam.Steam,
+                    )
+                    Text("Track info", style = MaterialTheme.typography.titleMedium, color = Steam.Parchment)
+                    Text(
+                        "Play, pause, next and previous always work. The track name, artist and progress line need Notification access, " +
+                            "which Android asks you to switch on once. On some phones you may first need to allow restricted settings " +
+                            "for Brassworks in its App info.",
+                        style = MaterialTheme.typography.labelLarge, color = Steam.Steam,
+                    )
+                    CogRow { CogButton("Notification access") { openListenerSettings(ctx) } }
+                }
+
                 if (w.type == WType.VIALS) {
                     Text("Readings", style = MaterialTheme.typography.titleMedium, color = Steam.Parchment)
                     Text(
