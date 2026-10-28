@@ -814,7 +814,7 @@ class WidgetBoard(private val prefs: SharedPreferences, land: Boolean = false) {
     }
 
     /** Switch between Auto, 5 x 10 and 4 x 9. This page is re-snapped now; the others when you next visit them. */
-    fun setGridKind(kind: String) {
+    fun chooseGrid(kind: String) {
         if (kind == gridKind) return
         gridKind = kind
         prefs.edit().putString("grid_kind", kind).apply()
@@ -1954,9 +1954,9 @@ private fun SettingsScreen(
                     if (board.gridMode) {
                         Text("Grid size", style = MaterialTheme.typography.titleMedium, color = Steam.Parchment)
                         Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-                            SpeedChip("Auto", board.gridKind == "auto", Modifier.weight(1f)) { board.setGridKind("auto") }
-                            SpeedChip("5 × 10", board.gridKind == "5x10", Modifier.weight(1f)) { board.setGridKind("5x10") }
-                            SpeedChip("4 × 9", board.gridKind == "4x9", Modifier.weight(1f)) { board.setGridKind("4x9") }
+                            SpeedChip("Auto", board.gridKind == "auto", Modifier.weight(1f)) { board.chooseGrid("auto") }
+                            SpeedChip("5 × 10", board.gridKind == "5x10", Modifier.weight(1f)) { board.chooseGrid("5x10") }
+                            SpeedChip("4 × 9", board.gridKind == "4x9", Modifier.weight(1f)) { board.chooseGrid("4x9") }
                         }
                         Text(
                             "Auto fits as many cells as the screen allows. 5 × 10 and 4 × 9 are columns by rows with the phone upright, and turn into 10 × 5 and 9 × 4 when you turn it on its side. Widgets are re-snapped when you change.",
