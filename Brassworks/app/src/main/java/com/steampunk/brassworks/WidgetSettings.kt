@@ -53,16 +53,18 @@ internal fun decodeSettings(raw: String?): WidgetSettings {
 }
 
 /** Widgets that show a time, so a 12 or 24 hour choice makes sense. */
-internal fun WType.hasClockFormat() = this == WType.CLOCK || this == WType.NIXIE || this == WType.ANALOG || this == WType.DIGITAL || this == WType.SUN
+internal fun WType.hasClockFormat() = this == WType.CLOCK || this == WType.NIXIE || this == WType.ANALOG || this == WType.DIGITAL || this == WType.SUN ||
+    this == WType.TIMER || this == WType.AGENDA
 
 /** Widgets that show a temperature. */
 internal fun WType.hasTemperature() = this == WType.ENGINE || this == WType.VIALS
 
 /** Widgets with a heading you can rename. Folders and link folders are renamed from inside. */
 internal fun WType.hasTitle() = this == WType.BOILER || this == WType.CARGO || this == WType.BAROMETER ||
-    this == WType.MEMO || this == WType.SHELF || this == WType.PICKS
+    this == WType.MEMO || this == WType.SHELF || this == WType.PICKS || this == WType.AGENDA
 
 internal fun WType.defaultTitle(): String = when (this) {
+    WType.AGENDA -> "Agenda"
     WType.BOILER -> "Boiler pressure"
     WType.CARGO -> "Cargo hold"
     WType.BAROMETER -> "Barometer"

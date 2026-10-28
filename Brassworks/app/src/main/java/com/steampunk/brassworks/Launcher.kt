@@ -239,6 +239,13 @@ private fun loadCounts(prefs: SharedPreferences): Map<String, Int> =
         if (p.size == 2) p[1].toIntOrNull()?.let { n -> p[0] to n } else null
     }.toMap()
 
+/** The most apps shown in the Archive's Recent row. */
+private const val MAX_RECENT = 8
+
+/** Package names of the apps you opened lately, newest first. */
+private fun loadRecent(prefs: SharedPreferences): List<String> =
+    (prefs.getString("recent", "") ?: "").split(",").filter { it.isNotBlank() }
+
 private fun launchApp(ctx: Context, app: AppInfo) {
     val i = Intent(Intent.ACTION_MAIN)
         .addCategory(Intent.CATEGORY_LAUNCHER)
@@ -454,7 +461,10 @@ enum class WType(
     SUN("Solar phase", "Sunrise, sunset and the sun's path", 340f, 140f, 200f, 100f, "Asks for your rough location once"),
     SOLAR("Solar system", "The planets where they really are today. Tap one to inspect it", 340f, 290f, 200f, 200f, "Recommended: no internet needed"),
     CHRONO("Chronometer", "Stopwatch with a lap. Keeps counting while you are away", 340f, 140f, 300f, 100f, "Recommended: a brass stopwatch"),
+    TIMER("Countdown", "A countdown timer and an alarm clock. They ring even when the launcher is closed", 340f, 150f, 300f, 130f, "Asks to send notifications once, so it can ring"),
     ALMANAC("Almanac", "Month calendar with today marked", 340f, 280f, 200f, 200f, "Recommended: the month at a glance"),
+    AGENDA("Agenda", "What is coming up in your calendar, day by day", 340f, 200f, 200f, 110f, "Asks to read your calendar once"),
+    LANTERN("Lantern", "A torch you switch on and off with a tap", 164f, 120f, 110f, 90f, "Recommended: no permission needed"),
     MEMO("Memorandum", "A notepad you can type in", 164f, 140f, 150f, 100f, "Recommended: jot things down fast"),
     SHELF("App shelf", "Apps you choose, one tap away", 340f, 130f, 110f, 100f, "Recommended: replaces the old dock"),
     FOLDER("Folder", "A named bundle of apps. Tap to open it", 164f, 150f, 110f, 110f, "Recommended: keeps related apps tidy"),
@@ -1114,7 +1124,9 @@ class WidgetBoard(private val prefs: SharedPreferences, land: Boolean = false, p
         linkItems.remove(id)
         widgetSettings.remove(id)
         prefs.edit().remove("wset_$id").remove("lname_$id").remove("llinks_$id").remove("note_$id").remove("fname_$id").remove("fapps_$id").remove("chr_acc_$id").remove("chr_start_$id").remove("chr_lap_$id")
-            .remove("ch_run_$id").remove("ch_base_$id").remove("ch_acc_$id").remove("ch_lap_$id").apply()
+            .remove("ch_run_$id").remove("ch_base_$id").remove("ch_acc_$id").remove("ch_lap_$id")
+            .remove("tm_mode_$id").remove("tm_set_$id").remove("tm_end_$id").remove("tm_left_$id").remove("al_min_$id").remove("al_at_$id").apply()
+        TimerEngine.forget(appCtx, id)
     }
 
     fun persist() {
@@ -1279,6 +1291,8 @@ fun LauncherRoot(tick: Int, homeSignal: Int, active: Boolean = true) {
     var pinned by remember { mutableStateOf(loadPinned(ctx, prefs)) }
     var counts by remember { mutableStateOf(loadCounts(prefs)) }
     var animations by remember { mutableStateOf(prefs.getBoolean("anim", true)) }
+    var recent by remember { mutableStateOf(loadRecent(prefs)) }
+    var recentOn by remember { mutableStateOf(prefs.getBoolean("recent_on", true)) }
     var drawer by remember { mutableStateOf(false) }
     var menuApp by remember { mutableStateOf<AppInfo?>(null) }
     var settings by remember { mutableStateOf(false) }
@@ -1314,11 +1328,53 @@ fun LauncherRoot(tick: Int, homeSignal: Int, active: Boolean = true) {
     }
     var hidden by remember { mutableStateOf(loadHidden(prefs)) }
 
+    // Backup, restore and reset (Settings > Backup and reset)
+    val ioScope = rememberCoroutineScope()
+    var confirm by remember { mutableStateOf<String?>(null) } // "layout", "defaults" or "restore"
+    var pendingRestore by remember { mutableStateOf<Uri?>(null) }
+    var lastBackup by remember { mutableStateOf(Backup.lastBackup(ctx)) }
+    var remindOn by remember { mutableStateOf(Backup.remindOn(ctx)) }
+    var remindDialog by remember { mutableStateOf(false) }
+    var hasRescue by remember { mutableStateOf(Backup.hasRescue(ctx)) }
+    var safeNotice by remember { mutableStateOf(SafeMode.notice(ctx)) }
+    val makeBackup = rememberLauncherForActivityResult(ActivityResultContracts.CreateDocument("application/json")) { uri ->
+        if (uri != null) ioScope.launch {
+            val ok = withContext(Dispatchers.IO) {
+                try {
+                    ctx.contentResolver.openOutputStream(uri)?.use { Backup.export(ctx, it); true } ?: false
+                } catch (e: Exception) { false }
+            }
+            if (ok) { Backup.markBackedUp(ctx); lastBackup = Backup.lastBackup(ctx) }
+            Toast.makeText(ctx, if (ok) "Backup saved" else "The backup could not be saved.", Toast.LENGTH_LONG).show()
+        }
+    }
+    val backupName = { "brassworks-backup-" + java.time.LocalDate.now() + ".json" }
+
+    // Coming back to the home screen counts as noticing a ringing timer or alarm, so it goes quiet.
+    LaunchedEffect(active) { if (active) TimerEngine.silence(ctx) }
+
+    // The program has now been running long enough to count as a good start (see SafeMode).
+    LaunchedEffect(Unit) {
+        delay(5000)
+        SafeMode.healthy(ctx)
+    }
+    // Once a month, suggest a backup. Only when the home screen is in front, and never on the very first run.
+    LaunchedEffect(active) {
+        if (active && safeNotice == 0) {
+            delay(2500)
+            if (Backup.reminderDue(ctx)) remindDialog = true
+        }
+    }
+    val pickBackup = rememberLauncherForActivityResult(ActivityResultContracts.OpenDocument()) { uri ->
+        if (uri != null) { pendingRestore = uri; confirm = "restore" }
+    }
+
     // Pressing the Home button closes everything and returns to the main screen.
     LaunchedEffect(homeSignal) {
         drawer = false; menuApp = null; settings = false; fabMenu = false; picker = false; editing = false
         openFolder = null; openLinks = null; linkEdit = null; menuFolder = null; folderPick = null; presetDialog = false; saveDialog = false; hiddenDialog = false; importDialog = false; renameFrom = null
         pagesDialog = false; confirmRemovePage = false; widgetDialog = null; creditsDialog = false; helpDialog = false
+        confirm = null; pendingRestore = null
         board.goToPage(0)
     }
     BackHandler(enabled = drawer || menuApp != null || settings || fabMenu || picker || editing || folderPick != null || openFolder != null) {
@@ -1372,7 +1428,11 @@ fun LauncherRoot(tick: Int, homeSignal: Int, active: Boolean = true) {
 
     val launch: (AppInfo) -> Unit = { app ->
         counts = counts + (app.packageName to ((counts[app.packageName] ?: 0) + 1))
-        prefs.edit().putString("counts", counts.entries.joinToString(",") { "${it.key}:${it.value}" }).apply()
+        recent = (listOf(app.packageName) + recent.filter { it != app.packageName }).take(MAX_RECENT)
+        prefs.edit()
+            .putString("counts", counts.entries.joinToString(",") { "${it.key}:${it.value}" })
+            .putString("recent", recent.joinToString(","))
+            .apply()
         launchApp(ctx, app)
     }
 
@@ -1401,6 +1461,7 @@ fun LauncherRoot(tick: Int, homeSignal: Int, active: Boolean = true) {
                 ) {
                     DrawerScreen(
                         apps = visibleApps,
+                        recent = if (recentOn) recent.mapNotNull { p -> visibleApps.firstOrNull { it.packageName == p } } else emptyList(),
                         onLaunch = launch,
                         onLongPress = { menuApp = it; menuFolder = null },
                         onClose = { drawer = false },
@@ -1421,6 +1482,18 @@ fun LauncherRoot(tick: Int, homeSignal: Int, active: Boolean = true) {
                         onShare = { shareLayout() },
                         onImport = { importDialog = true },
                         onHidden = { hiddenDialog = true },
+                        recentOn = recentOn,
+                        onRecentOn = { recentOn = it; prefs.edit().putBoolean("recent_on", it).apply() },
+                        onClearRecent = { recent = emptyList(); prefs.edit().remove("recent").apply() },
+                        lastBackup = lastBackup,
+                        remindOn = remindOn,
+                        onRemind = { remindOn = it; Backup.setRemind(ctx, it) },
+                        hasRescue = hasRescue,
+                        onRescued = { confirm = "rescued" },
+                        onBackup = { makeBackup.launch(backupName()) },
+                        onRestore = { pickBackup.launch(arrayOf("*/*")) },
+                        onResetLayout = { confirm = "layout" },
+                        onRestoreDefaults = { confirm = "defaults" },
                         onCredits = { creditsDialog = true },
                         onHelp = { helpDialog = true },
                         onClose = { settings = false },
@@ -1816,6 +1889,90 @@ fun LauncherRoot(tick: Int, homeSignal: Int, active: Boolean = true) {
             }
         }
 
+        // Confirmations for reset and restore
+        when (confirm) {
+            "layout" -> ConfirmDialog(
+                "RESET LAYOUT",
+                "Starts the widgets again from the Classic layout on a single page. Notes, folders, links and widget settings go with the old widgets, and the home gear and grid size return to their defaults. Your colours, presets and hidden apps are kept. This cannot be undone, so make a backup first if you want one.",
+                "Reset",
+                onConfirm = { confirm = null; Backup.resetLayout(ctx); Backup.refresh(ctx) },
+                onCancel = { confirm = null },
+            )
+            "defaults" -> ConfirmDialog(
+                "RESTORE DEFAULTS",
+                "Goes back to the Brass metal, Steampunk style, Orange glow, Classic font, normal gear speed, turning gears on and no wallpaper. Your own colours and uploaded font are cleared. Your layout, presets and hidden apps are kept.",
+                "Restore",
+                onConfirm = { confirm = null; Backup.restoreDefaults(ctx); Backup.refresh(ctx) },
+                onCancel = { confirm = null },
+            )
+            "rescued" -> ConfirmDialog(
+                "BRING BACK RESCUED COPY",
+                "Replaces everything with the copy Brassworks kept when it last had to start again from scratch. If something in that copy is what stopped Brassworks opening, safe mode will step in again.",
+                "Restore",
+                onConfirm = {
+                    confirm = null
+                    ioScope.launch {
+                        val ok = withContext(Dispatchers.IO) { Backup.restoreRescue(ctx) }
+                        if (ok) {
+                            Toast.makeText(ctx, "Rescued copy restored", Toast.LENGTH_SHORT).show()
+                            Backup.refresh(ctx)
+                        } else {
+                            Toast.makeText(ctx, "The rescued copy could not be read. Nothing was changed.", Toast.LENGTH_LONG).show()
+                        }
+                    }
+                },
+                onCancel = { confirm = null },
+            )
+            "restore" -> ConfirmDialog(
+                "RESTORE BACKUP",
+                "Replaces everything in Brassworks with what is in the file: layout, pages, notes, folders, links, colours, presets, wallpaper, hidden apps and settings. This cannot be undone.",
+                "Restore",
+                onConfirm = {
+                    val uri = pendingRestore
+                    confirm = null
+                    pendingRestore = null
+                    if (uri != null) ioScope.launch {
+                        val ok = withContext(Dispatchers.IO) {
+                            try {
+                                ctx.contentResolver.openInputStream(uri)?.use { Backup.restore(ctx, it) } ?: false
+                            } catch (e: Exception) { false }
+                        }
+                        if (ok) {
+                            Toast.makeText(ctx, "Backup restored", Toast.LENGTH_SHORT).show()
+                            Backup.refresh(ctx)
+                        } else {
+                            Toast.makeText(ctx, "That is not a usable Brassworks backup. Nothing was changed.", Toast.LENGTH_LONG).show()
+                        }
+                    }
+                },
+                onCancel = { confirm = null; pendingRestore = null },
+            )
+        }
+
+        // Monthly backup reminder
+        if (remindDialog) {
+            BackupReminderDialog(
+                onBackup = { remindDialog = false; makeBackup.launch(backupName()) },
+                onLater = { remindDialog = false; Backup.snooze(ctx) },
+                onStop = { remindDialog = false; remindOn = false; Backup.setRemind(ctx, false) },
+            )
+        }
+
+        // Shown once after safe mode stepped in
+        if (safeNotice != 0) {
+            NoticeDialog(
+                "SAFE MODE",
+                if (safeNotice >= 2)
+                    "Brassworks failed to start again, so it went back to the default look as well as the Classic layout. A copy of how things were is kept: Settings > Backup and reset > Rescued brings it back."
+                else
+                    "Brassworks failed to start several times, so it began again from the Classic layout. A copy of how things were is kept: Settings > Backup and reset > Rescued brings it back, or use Restore with one of your own backups.",
+            ) {
+                SafeMode.clearNotice(ctx)
+                safeNotice = 0
+                hasRescue = Backup.hasRescue(ctx)
+            }
+        }
+
         // Settings for one widget (the cog in Arrange mode)
         widgetDialog?.let { wid ->
             val w = board.items.orEmpty().firstOrNull { it.id == wid }
@@ -1897,6 +2054,18 @@ private fun SettingsScreen(
     onShare: () -> Unit,
     onImport: () -> Unit,
     onHidden: () -> Unit,
+    recentOn: Boolean,
+    onRecentOn: (Boolean) -> Unit,
+    onClearRecent: () -> Unit,
+    lastBackup: Long,
+    remindOn: Boolean,
+    onRemind: (Boolean) -> Unit,
+    hasRescue: Boolean,
+    onRescued: () -> Unit,
+    onBackup: () -> Unit,
+    onRestore: () -> Unit,
+    onResetLayout: () -> Unit,
+    onRestoreDefaults: () -> Unit,
     onCredits: () -> Unit,
     onHelp: () -> Unit,
     onClose: () -> Unit,
@@ -1971,6 +2140,10 @@ private fun SettingsScreen(
                         SpeedChip("Fast", Steam.gearFactor == 0.5f, Modifier.weight(1f)) { Steam.setGear(ctx, 0.5f) }
                     }
                     SettingSwitch("Turning gears", "Turn off to save battery", animations, onAnimations)
+                    SettingSwitch(
+                        "Brass icons", "Draws app icons in the colour of your metal, so they match the theme. In Dieselpunk they turn steel.",
+                        Steam.tintIcons,
+                    ) { Steam.setTintIcons(ctx, it) }
                     Text("Font", style = MaterialTheme.typography.titleMedium, color = Steam.Parchment)
                     Text("The Brassworks, est. 1887 · 0123456789", fontSize = 16.sp, fontFamily = Steam.font, color = Steam.BrassLight)
                     Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
@@ -2064,6 +2237,49 @@ private fun SettingsScreen(
                         style = MaterialTheme.typography.labelLarge, color = Steam.Steam,
                     )
                     CogRow { CogButton("Hidden") { onHidden() } }
+                    SettingSwitch(
+                        "Recent apps row", "Shows the apps you opened lately at the top of the Archive.",
+                        recentOn, onRecentOn,
+                    )
+                    if (recentOn) {
+                        CogRow { CogButton("Clear") { onClearRecent() } }
+                    }
+                }
+
+                // ---------------- Backup and reset ----------------
+                SettingsSection("Backup and reset") {
+                    Text(
+                        "Backup saves everything to one file that you choose where to keep: layout, pages, notes, folders, links, colours, style, font, wallpaper, presets, hidden apps and widget settings. Restore reads one back in and replaces what is here.",
+                        style = MaterialTheme.typography.labelLarge, color = Steam.Steam,
+                    )
+                    Text(
+                        if (lastBackup == 0L) "You have not made a backup yet."
+                        else "Last backup: " + java.text.DateFormat.getDateInstance().format(java.util.Date(lastBackup)),
+                        style = MaterialTheme.typography.labelLarge, color = Steam.Parchment,
+                    )
+                    CogRow {
+                        CogButton("Backup") { onBackup() }
+                        CogButton("Restore") { onRestore() }
+                    }
+                    SettingSwitch(
+                        "Backup reminder", "Suggests a backup once a month, when it has been that long since your last one.",
+                        remindOn, onRemind,
+                    )
+                    if (hasRescue) {
+                        Text(
+                            "Brassworks once failed to start and began again from the Classic layout. It kept a copy of how things were. Rescued brings that copy back.",
+                            style = MaterialTheme.typography.labelLarge, color = Steam.Steam,
+                        )
+                        CogRow { CogButton("Rescued") { onRescued() } }
+                    }
+                    Text(
+                        "Layout starts the widgets again from the Classic layout on one page, and puts the home gear and grid size back. Defaults returns the colours, style, font, wallpaper and gear speed to how Brassworks came. Both ask first.",
+                        style = MaterialTheme.typography.labelLarge, color = Steam.Steam,
+                    )
+                    CogRow {
+                        CogButton("Layout") { onResetLayout() }
+                        CogButton("Defaults") { onRestoreDefaults() }
+                    }
                 }
 
                 // ---------------- System ----------------
@@ -2444,7 +2660,10 @@ private fun WidgetBody(
             WType.SUN -> SunContent(now, is24w, prefs)
             WType.SOLAR -> SolarContent(now)
             WType.CHRONO -> ChronoContent(w.id, prefs)
+            WType.TIMER -> TimerContent(w.id, prefs, is24w)
             WType.ALMANAC -> AlmanacContent(now)
+            WType.AGENDA -> AgendaContent(is24w, ws.title.ifBlank { "Agenda" })
+            WType.LANTERN -> LanternContent()
             WType.MEMO -> MemoContent(w.id, prefs, editing, ws.title.ifBlank { "Memorandum" })
             WType.SHELF -> AppRowContent(
                 ws.title.ifBlank { "App shelf" },
@@ -2685,7 +2904,8 @@ private fun AlmanacContent(now: LocalDateTime) = BoxWithConstraints(Modifier.fil
     Column(Modifier.fillMaxSize()) {
         Text(
             now.month.getDisplayName(JTextStyle.FULL, Locale.getDefault()) + " " + now.year,
-            fontSize = 14.sp, fontFamily = Steam.font, fontWeight = FontWeight.Bold, color = Steam.BrassLight,
+            fontSize = 14.sp, fontFamily = Steam.font, fontWeight = FontWeight.Bold,
+            color = if (Steam.punk) Steam.nixie.lit else Steam.BrassLight,
             modifier = Modifier.height(22.dp), maxLines = 1,
         )
         Row(Modifier.fillMaxWidth()) {
@@ -2702,14 +2922,25 @@ private fun AlmanacContent(now: LocalDateTime) = BoxWithConstraints(Modifier.fil
                     Box(Modifier.weight(1f).height(cellH), contentAlignment = Alignment.Center) {
                         if (d in 1..days) {
                             val today = d == now.dayOfMonth
+                            // Dieselpunk marks today with a glowing neon ring instead of a solid brass disc.
                             Box(
-                                if (today) Modifier.size(dot).clip(CircleShape).background(Steam.Brass) else Modifier,
+                                when {
+                                    !today -> Modifier
+                                    Steam.punk -> Modifier.size(dot).clip(CircleShape)
+                                        .background(Steam.nixie.glow.copy(alpha = 0.25f))
+                                        .border(2.dp, Steam.nixie.lit, CircleShape)
+                                    else -> Modifier.size(dot).clip(CircleShape).background(Steam.Brass)
+                                },
                                 contentAlignment = Alignment.Center,
                             ) {
                                 Text(
                                     "$d", fontSize = fs.sp, fontFamily = Steam.font,
                                     fontWeight = if (today) FontWeight.Bold else FontWeight.Normal,
-                                    color = if (today) Steam.Ink else Steam.Parchment,
+                                    color = when {
+                                        !today -> Steam.Parchment
+                                        Steam.punk -> Steam.nixie.lit
+                                        else -> Steam.Ink
+                                    },
                                 )
                             }
                         }
@@ -3305,6 +3536,7 @@ private fun LetterHeader(letter: String) {
 @Composable
 private fun DrawerScreen(
     apps: List<AppInfo>,
+    recent: List<AppInfo>,
     onLaunch: (AppInfo) -> Unit,
     onLongPress: (AppInfo) -> Unit,
     onClose: () -> Unit,
@@ -3325,8 +3557,11 @@ private fun DrawerScreen(
         if (query.isBlank()) shown.groupBy { sectionOf(it.label) }.toList() else emptyList()
     }
     // Grid position of each letter's header, so the letter strip can jump straight to it
-    val headerAt = remember(sections) {
-        var at = 0
+    // The Recent row comes first when nothing is typed, so every letter's position is pushed down by its size
+    val recentShown = if (query.isBlank()) recent else emptyList()
+    val recentSize = if (recentShown.isEmpty()) 0 else 1 + recentShown.size
+    val headerAt = remember(sections, recentSize) {
+        var at = recentSize
         sections.associate { (letter, list) ->
             val here = at
             at += 1 + list.size
@@ -3402,6 +3637,10 @@ private fun DrawerScreen(
                     contentPadding = PaddingValues(end = if (showStrip) 22.dp else 0.dp, bottom = 12.dp),
                 ) {
                     if (query.isBlank()) {
+                        if (recentShown.isNotEmpty()) {
+                            item(key = "section_recent", span = { GridItemSpan(maxLineSpan) }) { LetterHeader("Recent") }
+                            items(recentShown, key = { "recent_" + it.component.flattenToString() }) { app -> AppCell(app, onLaunch, onLongPress) }
+                        }
                         sections.forEach { (letter, list) ->
                             item(key = "section_$letter", span = { GridItemSpan(maxLineSpan) }) { LetterHeader(letter) }
                             items(list, key = { it.component.flattenToString() }) { app -> AppCell(app, onLaunch, onLongPress) }

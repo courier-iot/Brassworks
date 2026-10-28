@@ -85,6 +85,17 @@ private val HELP = listOf(
             "The buttons control whatever music app is playing. For the track name and progress, tap the prompt on the widget and switch on Notification access once.",
     ),
     InfoSection(
+        "Countdown, Agenda and Lantern",
+        "Countdown is a timer and an alarm clock: tap its title to switch between them. They use Android's alarm service, so they ring even when the launcher is closed. " +
+            "Android asks once if the launcher may send notifications, which is how it rings. Coming back to the home screen, tapping the notification or pressing Quiet stops the sound. " +
+            "Agenda lists what is coming up in your calendar after you tap Allow. Lantern switches your torch on and off with a tap and needs no permission.",
+    ),
+    InfoSection(
+        "Recent apps and Brass icons",
+        "The Archive shows the apps you opened lately in a Recent row at the top. Settings > Apps turns the row off or clears it. " +
+            "Settings > Look > Brass icons draws every app icon in the colour of your metal so they match the theme.",
+    ),
+    InfoSection(
         "Folders and links",
         "Add a Folder or Link folder widget and tap it to open. To put an app in a folder, long-press it and choose Folder. " +
             "Link folders have an Add link button beside Close.",
@@ -98,6 +109,13 @@ private val HELP = listOf(
     InfoSection(
         "Settings",
         "Workshop > Settings has the style (Steampunk or Dieselpunk), the metal, nixie glow, gear speed, font, wallpaper, your own mixed colours, the fixed grid and its size (Auto, 5 × 10 or 4 × 9), hidden apps and your default home app.",
+    ),
+    InfoSection(
+        "Backup and reset",
+        "Settings > Backup and reset. Backup saves everything to one file wherever you choose, and Restore reads one back in. " +
+            "Layout starts the widgets again from the Classic layout. Defaults puts the colours, style, font, wallpaper and gear speed back to how Brassworks came. " +
+            "Each of them asks before it changes anything. About once a month Brassworks offers to make a backup; Settings has a switch to turn that off. " +
+            "If Brassworks ever fails to start several times, it starts again from the Classic layout and keeps a copy of how things were. Rescued, in the same place, brings it back.",
     ),
 )
 

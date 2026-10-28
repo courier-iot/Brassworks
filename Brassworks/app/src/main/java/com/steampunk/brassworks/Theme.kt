@@ -204,6 +204,14 @@ object Steam {
     /** How much the wallpaper is darkened, 0 to 0.85. */
     var wallDim by mutableFloatStateOf(0.45f)
 
+    /** Brass icons: app icons are drawn in the colour of the metal instead of their own colours. */
+    var tintIcons by mutableStateOf(false)
+
+    fun setTintIcons(ctx: Context, on: Boolean) {
+        tintIcons = on
+        prefs(ctx).edit().putBoolean("tint_icons", on).apply()
+    }
+
     /** The font used for all text. Reading it repaints everything when you change it. */
     val font: FontFamily
         get() = when (fontKey) {
@@ -249,6 +257,7 @@ object Steam {
         if (fontKey == "custom" && custom == null) fontKey = "classic"
         if (fontKey == "victorian" && victorian == null) fontKey = "classic"
         wallDim = p.getFloat("wall_dim", 0.45f)
+        tintIcons = p.getBoolean("tint_icons", false)
         readWallpaper(ctx)
     }
 

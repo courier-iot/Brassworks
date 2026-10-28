@@ -40,6 +40,9 @@ import androidx.compose.ui.geometry.Rect
 import androidx.compose.ui.geometry.Size
 import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.graphics.ColorFilter
+import androidx.compose.ui.graphics.ColorMatrix
+import androidx.compose.ui.graphics.lerp
 import androidx.compose.ui.graphics.Path
 import androidx.compose.ui.graphics.PathEffect
 import androidx.compose.ui.graphics.Shadow
@@ -302,8 +305,73 @@ fun Porthole(icon: ImageBitmap, modifier: Modifier = Modifier, size: Dp = 62.dp)
                 drawCircle(Steam.BrassLight, r * 0.025f, p - Offset(r * 0.015f, r * 0.015f))
             }
         }
-        Image(icon, contentDescription = null, modifier = Modifier.fillMaxSize(0.62f).clip(CircleShape))
+        Image(
+            icon, contentDescription = null, modifier = Modifier.fillMaxSize(0.62f).clip(CircleShape),
+            colorFilter = if (Steam.tintIcons) brassFilter() else null,
+        )
     }
+}
+
+/**
+ * Brass icons: turns an icon to shades of grey, then colours the greys with the metal of your theme.
+ * (In Dieselpunk the metal is steel, so the icons turn steel.)
+ */
+private fun brassFilter(): ColorFilter {
+    val t = lerp(Steam.BrassLight, Color.White, 0.2f)
+    val r = 0.299f
+    val g = 0.587f
+    val b = 0.114f
+    return ColorFilter.colorMatrix(
+        ColorMatrix(
+            floatArrayOf(
+                t.red * r, t.red * g, t.red * b, 0f, 0f,
+                t.green * r, t.green * g, t.green * b, 0f, 0f,
+                t.blue * r, t.blue * g, t.blue * b, 0f, 0f,
+                0f, 0f, 0f, 1f, 0f,
+            ),
+        ),
+    )
+}
+
+// ───────────────────────── Dial faces ─────────────────────────
+// In Steampunk a dial is a brass bezel around a parchment face with ink marks. In Dieselpunk the bezel is steel
+// with four bolts, the face is dark gunmetal, and the marks and needles are neon in your Nixie glow colour.
+
+/** Colour for scale marks and the main hand. */
+private val dialMark: Color get() = if (Steam.punk) Steam.nixie.lit else Steam.Ink
+
+/** Colour for the accent: the north marker, the second needle, the danger zone. */
+private val dialAccent: Color get() = if (Steam.punk) Color(0xFFFF4B3E) else Steam.Copper
+
+/** The bezel and face of any round dial. faceFrac is how much of the radius the face takes up. */
+internal fun DrawScope.dialFace(c: Offset, r: Float, faceFrac: Float) {
+    if (Steam.punk) {
+        drawCircle(Brush.radialGradient(listOf(Steam.BrassLight, Steam.Brass, Steam.BrassDark), center = c, radius = r), r, c)
+        drawCircle(Color(0xFF0A0D11), r * faceFrac, c)
+        drawCircle(Steam.nixie.glow.copy(alpha = 0.28f), r * faceFrac, c, style = Stroke(r * 0.05f))
+        drawCircle(Steam.nixie.lit, r * faceFrac, c, style = Stroke(r * 0.016f))
+        val mid = r * (1f + faceFrac) / 2f
+        for (a in listOf(45.0, 135.0, 225.0, 315.0)) {
+            val p = polar(c, mid, a)
+            drawCircle(Steam.BrassDark, r * 0.04f, p)
+            drawCircle(Steam.BrassLight.copy(alpha = 0.8f), r * 0.025f, p)
+        }
+    } else {
+        drawCircle(Brush.radialGradient(listOf(Steam.BrassLight, Steam.BrassDark), center = c, radius = r), r, c)
+        drawCircle(Steam.Parchment, r * faceFrac, c)
+    }
+}
+
+/** A hand or needle. In Dieselpunk it gets a soft neon halo underneath. */
+internal fun DrawScope.dialHand(from: Offset, to: Offset, width: Float, color: Color) {
+    if (Steam.punk) drawLine(color.copy(alpha = 0.30f), from, to, strokeWidth = width * 3.2f, cap = StrokeCap.Round)
+    drawLine(color, from, to, strokeWidth = width, cap = StrokeCap.Round)
+}
+
+/** The centre cap that the hands turn on. */
+internal fun DrawScope.dialHub(c: Offset, r: Float) {
+    drawCircle(Steam.BrassDark, r * 0.08f, c)
+    drawCircle(Steam.BrassLight, r * 0.03f, c)
 }
 
 /** Dial gauge. value is 0..1. dangerLow puts the red zone at the low end (for a battery). */
@@ -317,11 +385,16 @@ fun PressureGauge(value: Float, modifier: Modifier = Modifier, dangerLow: Boolea
     Canvas(modifier.aspectRatio(1f)) {
         val c = center
         val r = size.minDimension / 2f
-        drawCircle(Brush.radialGradient(listOf(Steam.BrassLight, Steam.BrassDark), center = c, radius = r), r, c)
-        drawCircle(Steam.Parchment, r * 0.88f, c)
+        dialFace(c, r, 0.88f)
+        val zoneStart = if (dangerLow) 135f else 135f + 270f * 0.8f
+        if (Steam.punk) {
+            drawArc(
+                dialAccent.copy(alpha = 0.28f), startAngle = zoneStart, sweepAngle = 270f * 0.2f, useCenter = false,
+                topLeft = Offset(c.x - r * 0.8f, c.y - r * 0.8f), size = Size(r * 1.6f, r * 1.6f), style = Stroke(r * 0.13f),
+            )
+        }
         drawArc(
-            Steam.Copper,
-            startAngle = if (dangerLow) 135f else 135f + 270f * 0.8f,
+            dialAccent, startAngle = zoneStart,
             sweepAngle = 270f * 0.2f, useCenter = false,
             topLeft = Offset(c.x - r * 0.8f, c.y - r * 0.8f), size = Size(r * 1.6f, r * 1.6f),
             style = Stroke(r * 0.07f),
@@ -329,11 +402,10 @@ fun PressureGauge(value: Float, modifier: Modifier = Modifier, dangerLow: Boolea
         for (i in 0..10) {
             val major = i % 5 == 0
             val deg = 135.0 + 27.0 * i
-            drawLine(Steam.Ink, polar(c, r * (if (major) 0.60f else 0.68f), deg), polar(c, r * 0.74f, deg), strokeWidth = if (major) 5f else 3f)
+            drawLine(dialMark, polar(c, r * (if (major) 0.60f else 0.68f), deg), polar(c, r * 0.74f, deg), strokeWidth = if (major) 5f else 3f)
         }
-        drawLine(Steam.Copper, c, polar(c, r * 0.62f, 135.0 + 270.0 * v), strokeWidth = r * 0.04f, cap = StrokeCap.Round)
-        drawCircle(Steam.BrassDark, r * 0.08f, c)
-        drawCircle(Steam.BrassLight, r * 0.03f, c)
+        dialHand(c, polar(c, r * 0.62f, 135.0 + 270.0 * v), r * 0.04f, if (Steam.punk) Steam.nixie.glow else dialAccent)
+        dialHub(c, r)
     }
 }
 
@@ -343,17 +415,15 @@ fun AnalogClock(hour: Float, minute: Float, modifier: Modifier = Modifier) {
     Canvas(modifier.aspectRatio(1f)) {
         val c = center
         val r = size.minDimension / 2f
-        drawCircle(Brush.radialGradient(listOf(Steam.BrassLight, Steam.BrassDark), center = c, radius = r), r, c)
-        drawCircle(Steam.Parchment, r * 0.9f, c)
+        dialFace(c, r, 0.9f)
         for (i in 0 until 60) {
             val major = i % 5 == 0
             val deg = i * 6.0 - 90.0
-            drawLine(Steam.Ink, polar(c, r * (if (major) 0.72f else 0.80f), deg), polar(c, r * 0.86f, deg), strokeWidth = if (major) 5f else 2f)
+            drawLine(dialMark, polar(c, r * (if (major) 0.72f else 0.80f), deg), polar(c, r * 0.86f, deg), strokeWidth = if (major) 5f else 2f)
         }
-        drawLine(Steam.Ink, c, polar(c, r * 0.45f, hour / 12.0 * 360.0 - 90.0), strokeWidth = r * 0.075f, cap = StrokeCap.Round)
-        drawLine(Steam.Copper, c, polar(c, r * 0.68f, minute / 60.0 * 360.0 - 90.0), strokeWidth = r * 0.045f, cap = StrokeCap.Round)
-        drawCircle(Steam.BrassDark, r * 0.07f, c)
-        drawCircle(Steam.BrassLight, r * 0.03f, c)
+        dialHand(c, polar(c, r * 0.45f, hour / 12.0 * 360.0 - 90.0), r * 0.075f, dialMark)
+        dialHand(c, polar(c, r * 0.68f, minute / 60.0 * 360.0 - 90.0), r * 0.045f, if (Steam.punk) Steam.nixie.glow else dialAccent)
+        dialHub(c, r)
     }
 }
 
@@ -614,8 +684,7 @@ fun CompassRose(heading: Float, modifier: Modifier = Modifier) = BoxWithConstrai
     Canvas(Modifier.fillMaxSize()) {
         val c = center
         val r = size.minDimension / 2f
-        drawCircle(Brush.radialGradient(listOf(Steam.BrassLight, Steam.BrassDark), center = c, radius = r), r, c)
-        drawCircle(Steam.Parchment, r * 0.88f, c)
+        dialFace(c, r, 0.88f)
     }
     Box(Modifier.fillMaxSize().graphicsLayer { rotationZ = -heading }) {
         Canvas(Modifier.fillMaxSize()) {
@@ -624,7 +693,7 @@ fun CompassRose(heading: Float, modifier: Modifier = Modifier) = BoxWithConstrai
             for (i in 0 until 36) {
                 val major = i % 3 == 0
                 val deg = i * 10.0 - 90.0
-                drawLine(Steam.Ink, polar(c, r * (if (major) 0.78f else 0.81f), deg), polar(c, r * 0.85f, deg), strokeWidth = if (major) 4f else 2f)
+                drawLine(dialMark, polar(c, r * (if (major) 0.78f else 0.81f), deg), polar(c, r * 0.85f, deg), strokeWidth = if (major) 4f else 2f)
             }
             val north = Path().apply {
                 moveTo(c.x, c.y - r * 0.40f); lineTo(c.x - r * 0.09f, c.y); lineTo(c.x + r * 0.09f, c.y); close()
@@ -632,15 +701,16 @@ fun CompassRose(heading: Float, modifier: Modifier = Modifier) = BoxWithConstrai
             val south = Path().apply {
                 moveTo(c.x, c.y + r * 0.40f); lineTo(c.x - r * 0.09f, c.y); lineTo(c.x + r * 0.09f, c.y); close()
             }
-            drawPath(north, Steam.Copper)
-            drawPath(south, Steam.Ink)
+            if (Steam.punk) drawPath(north, dialAccent.copy(alpha = 0.3f), style = Stroke(r * 0.06f, join = StrokeJoin.Round))
+            drawPath(north, dialAccent)
+            drawPath(south, if (Steam.punk) dialMark.copy(alpha = 0.55f) else dialMark)
             drawCircle(Steam.BrassDark, r * 0.06f, c)
             drawCircle(Steam.BrassLight, r * 0.025f, c)
         }
-        Text("N", Modifier.align(Alignment.TopCenter).padding(top = inset), fontSize = fs, fontFamily = Steam.font, fontWeight = FontWeight.Bold, color = Steam.Copper)
-        Text("E", Modifier.align(Alignment.CenterEnd).padding(end = inset), fontSize = fs, fontFamily = Steam.font, fontWeight = FontWeight.Bold, color = Steam.Ink)
-        Text("S", Modifier.align(Alignment.BottomCenter).padding(bottom = inset), fontSize = fs, fontFamily = Steam.font, fontWeight = FontWeight.Bold, color = Steam.Ink)
-        Text("W", Modifier.align(Alignment.CenterStart).padding(start = inset), fontSize = fs, fontFamily = Steam.font, fontWeight = FontWeight.Bold, color = Steam.Ink)
+        Text("N", Modifier.align(Alignment.TopCenter).padding(top = inset), fontSize = fs, fontFamily = Steam.font, fontWeight = FontWeight.Bold, color = dialAccent)
+        Text("E", Modifier.align(Alignment.CenterEnd).padding(end = inset), fontSize = fs, fontFamily = Steam.font, fontWeight = FontWeight.Bold, color = dialMark)
+        Text("S", Modifier.align(Alignment.BottomCenter).padding(bottom = inset), fontSize = fs, fontFamily = Steam.font, fontWeight = FontWeight.Bold, color = dialMark)
+        Text("W", Modifier.align(Alignment.CenterStart).padding(start = inset), fontSize = fs, fontFamily = Steam.font, fontWeight = FontWeight.Bold, color = dialMark)
     }
     Canvas(Modifier.fillMaxSize()) {
         val c = center
@@ -648,7 +718,7 @@ fun CompassRose(heading: Float, modifier: Modifier = Modifier) = BoxWithConstrai
         val mark = Path().apply {
             moveTo(c.x, c.y - r * 0.80f); lineTo(c.x - r * 0.06f, c.y - r * 0.93f); lineTo(c.x + r * 0.06f, c.y - r * 0.93f); close()
         }
-        drawPath(mark, Steam.Copper)
+        drawPath(mark, dialAccent)
     }
 }
 
@@ -660,7 +730,7 @@ fun MoonDisc(ageDays: Double, modifier: Modifier = Modifier) {
         val r = size.minDimension / 2f
         val mr = r * 0.88f
         val f = (ageDays / 29.530588853).toFloat().coerceIn(0f, 1f)
-        drawCircle(Brush.radialGradient(listOf(Steam.BrassLight, Steam.BrassDark), center = c, radius = r), r, c)
+        dialFace(c, r, 0.88f)
         drawCircle(Color(0xFF232733), mr, c) // the dark side
         val waxing = f <= 0.5f
         val q = if (waxing) f else 1f - f // 0 = new, 0.5 = full
@@ -696,17 +766,27 @@ fun SunArc(progress: Float?, modifier: Modifier = Modifier) {
         val baseY = h * 0.82f
         val rad = minOf(w * 0.42f, baseY - 6f)
         val cx = w / 2f
-        drawLine(Steam.BrassDark, Offset(cx - rad - 10f, baseY), Offset(cx + rad + 10f, baseY), strokeWidth = 3f, cap = StrokeCap.Round)
+        val punk = Steam.punk
+        val horizon = if (punk) Steam.nixie.glow else Steam.BrassDark
+        val track = if (punk) Steam.nixie.lit else Steam.Brass
+        if (punk) {
+            drawLine(horizon.copy(alpha = 0.3f), Offset(cx - rad - 10f, baseY), Offset(cx + rad + 10f, baseY), strokeWidth = 9f, cap = StrokeCap.Round)
+            drawArc(
+                horizon.copy(alpha = 0.25f), 180f, 180f, false, Offset(cx - rad, baseY - rad), Size(rad * 2f, rad * 2f),
+                style = Stroke(9f),
+            )
+        }
+        drawLine(horizon, Offset(cx - rad - 10f, baseY), Offset(cx + rad + 10f, baseY), strokeWidth = 3f, cap = StrokeCap.Round)
         drawArc(
-            Steam.Brass, 180f, 180f, false, Offset(cx - rad, baseY - rad), Size(rad * 2f, rad * 2f),
+            track, 180f, 180f, false, Offset(cx - rad, baseY - rad), Size(rad * 2f, rad * 2f),
             style = Stroke(3f, pathEffect = PathEffect.dashPathEffect(floatArrayOf(10f, 8f))),
         )
         if (progress != null) {
             val th = Math.PI * (1.0 - progress)
             val sx = cx + rad * cos(th).toFloat()
             val sy = baseY - rad * sin(th).toFloat()
-            drawCircle(Steam.BrassLight.copy(alpha = 0.30f), 16f, Offset(sx, sy))
-            drawCircle(Steam.BrassLight, 9f, Offset(sx, sy))
+            drawCircle((if (punk) Steam.nixie.glow else Steam.BrassLight).copy(alpha = 0.30f), 16f, Offset(sx, sy))
+            drawCircle(if (punk) Steam.nixie.lit else Steam.BrassLight, 9f, Offset(sx, sy))
         }
     }
 }
