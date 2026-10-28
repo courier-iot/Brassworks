@@ -1,5 +1,0 @@
-mkdir -p docs/images
-# copy banner.svg, home-screen.svg, gestures.svg, music-player.svg, palettes.svg into docs/images/
-git add docs
-git commit -m "Add README images"
-git push
