@@ -7,7 +7,10 @@ import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.text.font.FontStyle
+import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.unit.dp
+import androidx.compose.ui.unit.sp
 import androidx.compose.ui.window.Dialog
 
 private class InfoSection(val heading: String, val body: String)
@@ -88,7 +91,7 @@ private val HELP = listOf(
 )
 
 @Composable
-private fun InfoDialog(title: String, sections: List<InfoSection>, onClose: () -> Unit) {
+private fun InfoDialog(title: String, sections: List<InfoSection>, onClose: () -> Unit, footer: String? = null) {
     Dialog(onDismissRequest = onClose) {
         RivetedPanel(Modifier.fillMaxWidth()) {
             Column(Modifier.fillMaxWidth(), verticalArrangement = Arrangement.spacedBy(10.dp)) {
@@ -104,6 +107,13 @@ private fun InfoDialog(title: String, sections: List<InfoSection>, onClose: () -
                         }
                     }
                 }
+                if (footer != null) {
+                    Text(
+                        footer, modifier = Modifier.fillMaxWidth(), textAlign = TextAlign.Center,
+                        style = MaterialTheme.typography.labelLarge, fontSize = 11.sp,
+                        fontStyle = FontStyle.Italic, color = Steam.Steam.copy(alpha = 0.6f),
+                    )
+                }
                 CogRow { CogButton("Close", onClick = onClose) }
             }
         }
@@ -112,7 +122,10 @@ private fun InfoDialog(title: String, sections: List<InfoSection>, onClose: () -
 
 /** Credits and licences. */
 @Composable
-fun CreditsDialog(onClose: () -> Unit) = InfoDialog("CREDITS", CREDITS, onClose)
+fun CreditsDialog(onClose: () -> Unit) = InfoDialog(
+    "CREDITS", CREDITS, onClose,
+    footer = "Ruthlessness is mercy upon ourselves. Adapt to the times, and fight for what is right.",
+)
 
 /** A short guide to every gesture. */
 @Composable
