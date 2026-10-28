@@ -22,6 +22,7 @@ import androidx.compose.runtime.setValue
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.ImageBitmap
 import androidx.compose.ui.graphics.asImageBitmap
+import androidx.compose.ui.graphics.lerp
 import androidx.compose.ui.graphics.toArgb
 import androidx.compose.ui.platform.LocalView
 import androidx.compose.ui.text.font.Font
@@ -128,6 +129,12 @@ object Steam {
     /** The glow colour of every nixie tube. */
     var nixie by mutableStateOf(NixieColors[0])
 
+    /** "steam" (brass, wood and rivets) or "diesel" (gunmetal, cut corners, neon edges and grime). */
+    var style by mutableStateOf("steam")
+
+    /** True in the Dieselpunk style. */
+    val punk: Boolean get() = style == "diesel"
+
     /** Multiplies how long a gear takes to turn: 1.8 is slow, 1 normal, 0.5 fast. */
     var gearFactor by mutableFloatStateOf(1f)
 
@@ -159,12 +166,14 @@ object Steam {
             else -> FontFamily.Serif
         }
 
-    val Soot: Color get() = palette.soot
-    val Leather: Color get() = palette.leather
-    val Walnut: Color get() = palette.walnut
-    val Brass: Color get() = palette.brass
-    val BrassLight: Color get() = palette.brassLight
-    val BrassDark: Color get() = palette.brassDark
+    // In Dieselpunk the wood becomes gunmetal and the brass becomes steel. Your Metal choice still tints
+    // the steel a little, so Cobalt gives blue steel and Copper gives warm steel.
+    val Soot: Color get() = if (punk) lerp(palette.soot, Color(0xFF080A0D), 0.75f) else palette.soot
+    val Leather: Color get() = if (punk) lerp(palette.leather, Color(0xFF14181D), 0.8f) else palette.leather
+    val Walnut: Color get() = if (punk) lerp(palette.walnut, Color(0xFF232930), 0.8f) else palette.walnut
+    val Brass: Color get() = if (punk) lerp(palette.brass, Color(0xFF8A95A0), 0.7f) else palette.brass
+    val BrassLight: Color get() = if (punk) lerp(palette.brassLight, Color(0xFFD3DBE2), 0.7f) else palette.brassLight
+    val BrassDark: Color get() = if (punk) lerp(palette.brassDark, Color(0xFF39414A), 0.7f) else palette.brassDark
     val Copper: Color get() = palette.copper
     val Verdigris: Color get() = palette.verdigris
     val Parchment: Color get() = palette.parchment
@@ -177,6 +186,7 @@ object Steam {
     fun load(ctx: Context) {
         val p = prefs(ctx)
         palette = Palettes.firstOrNull { it.name == p.getString("theme", "Brass") } ?: Palettes[0]
+        style = if (p.getString("style", "steam") == "diesel") "diesel" else "steam"
         gearFactor = p.getFloat("gear", 1f)
         nixie = NixieColors.firstOrNull { it.name == p.getString("nixie", "Orange") } ?: NixieColors[0]
         fontKey = p.getString("font", "classic") ?: "classic"
@@ -273,6 +283,12 @@ object Steam {
     fun choose(ctx: Context, pal: Palette) {
         palette = pal
         prefs(ctx).edit().putString("theme", pal.name).apply()
+    }
+
+    /** Switch between "steam" and "diesel". Everything repaints straight away. */
+    fun chooseStyle(ctx: Context, key: String) {
+        style = if (key == "diesel") "diesel" else "steam"
+        prefs(ctx).edit().putString("style", style).apply()
     }
 
     private fun customFile(ctx: Context) = File(ctx.filesDir, "custom_font")

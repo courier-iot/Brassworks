@@ -17,6 +17,7 @@ import androidx.compose.foundation.interaction.MutableInteractionSource
 import androidx.compose.foundation.interaction.collectIsPressedAsState
 import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.shape.CircleShape
+import androidx.compose.foundation.shape.CutCornerShape
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Text
@@ -44,6 +45,7 @@ import androidx.compose.ui.graphics.PathEffect
 import androidx.compose.ui.graphics.Shadow
 import androidx.compose.ui.graphics.ImageBitmap
 import androidx.compose.ui.graphics.StrokeCap
+import androidx.compose.ui.graphics.StrokeJoin
 import androidx.compose.ui.graphics.graphicsLayer
 import androidx.compose.ui.hapticfeedback.HapticFeedbackType
 import androidx.compose.ui.platform.LocalHapticFeedback
@@ -58,6 +60,7 @@ import androidx.compose.ui.text.TextStyle
 import androidx.compose.ui.text.font.FontFamily
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
+import kotlin.random.Random
 import androidx.compose.ui.unit.sp
 import kotlin.math.abs
 import kotlin.math.cos
@@ -130,6 +133,23 @@ fun SteamBackdrop(modifier: Modifier = Modifier) {
             Image(wall, contentDescription = null, modifier = Modifier.fillMaxSize(), contentScale = ContentScale.Crop)
             Box(Modifier.fillMaxSize().background(Color.Black.copy(alpha = Steam.wallDim)))
         } else {
+            if (Steam.punk) {
+                // riveted steel plates: faint seams with a bolt along each
+                Canvas(Modifier.fillMaxSize()) {
+                    val gap = 150.dp.toPx()
+                    var y = gap
+                    while (y < size.height) {
+                        drawLine(Color.White.copy(alpha = 0.05f), Offset(0f, y), Offset(size.width, y), strokeWidth = 1.dp.toPx())
+                        drawLine(Color.Black.copy(alpha = 0.35f), Offset(0f, y + 1.dp.toPx()), Offset(size.width, y + 1.dp.toPx()), strokeWidth = 1.dp.toPx())
+                        var x = 24.dp.toPx()
+                        while (x < size.width) {
+                            drawCircle(Color.White.copy(alpha = 0.07f), 2.dp.toPx(), Offset(x, y - 10.dp.toPx()))
+                            x += 96.dp.toPx()
+                        }
+                        y += gap
+                    }
+                }
+            }
             Gear(Modifier.size(280.dp).align(Alignment.TopEnd).offset(100.dp, (-60).dp).alpha(0.09f), teeth = 14, speed = 48f)
             Gear(Modifier.size(220.dp).align(Alignment.CenterStart).offset((-110).dp, 40.dp).alpha(0.07f), teeth = 11, speed = 36f, reverse = true)
             Gear(Modifier.size(200.dp).align(Alignment.BottomEnd).offset(70.dp, 60.dp).alpha(0.08f), teeth = 10, speed = 30f, reverse = true)
@@ -143,7 +163,68 @@ private fun DrawScope.rivet(at: Offset, scale: Float = 1f) {
     drawCircle(Steam.BrassLight, 1.8.dp.toPx() * scale, at - Offset(1.5.dp.toPx() * scale, 1.5.dp.toPx() * scale))
 }
 
-/** Dark wood panel with a brass frame and four rivets. */
+/** A steel bolt, used in the Dieselpunk style. */
+private fun DrawScope.bolt(at: Offset) {
+    drawCircle(Color.Black.copy(alpha = 0.5f), 6.dp.toPx(), at)
+    drawCircle(Steam.BrassDark, 5.dp.toPx(), at)
+    drawCircle(Steam.Brass, 3.8.dp.toPx(), at)
+    drawLine(Steam.BrassDark, at - Offset(2.6.dp.toPx(), 0f), at + Offset(2.6.dp.toPx(), 0f), strokeWidth = 1.2.dp.toPx())
+    drawCircle(Steam.BrassLight.copy(alpha = 0.8f), 1.1.dp.toPx(), at - Offset(1.6.dp.toPx(), 1.6.dp.toPx()))
+}
+
+/**
+ * The Dieselpunk finish for a panel: worn corners, scratches and oil streaks, a neon line set in from the edge,
+ * and four bolts. The neon follows the nixie colour in Settings.
+ */
+private fun DrawScope.dieselTrim(seed: Int, lit: Color, glow: Color) {
+    val w = size.width
+    val h = size.height
+    val cut = 14.dp.toPx()
+    val reach = minOf(maxOf(w, h), 320.dp.toPx())
+
+    // grime: dark smudges gathering in two corners
+    drawRect(Brush.radialGradient(listOf(Color.Black.copy(alpha = 0.38f), Color.Transparent), Offset(0f, h), reach * 0.8f))
+    drawRect(Brush.radialGradient(listOf(Color.Black.copy(alpha = 0.30f), Color.Transparent), Offset(w, 0f), reach * 0.7f))
+
+    // scratches and oil streaks: different on every panel, but the same every time it is drawn
+    val rnd = Random(seed)
+    for (i in 0 until 26) {
+        val x = rnd.nextFloat() * w
+        val y = rnd.nextFloat() * h
+        val len = (6f + rnd.nextFloat() * 34f).dp.toPx()
+        val a = -0.5f + rnd.nextFloat() * 1.0f
+        val light = i % 4 != 0
+        drawLine(
+            (if (light) Color.White else Color.Black).copy(alpha = if (light) 0.04f + rnd.nextFloat() * 0.07f else 0.25f),
+            Offset(x, y), Offset(x + len * cos(a), y + len * sin(a)), strokeWidth = 0.8.dp.toPx(),
+        )
+    }
+    for (i in 0 until 3) {
+        val x = (0.1f + rnd.nextFloat() * 0.8f) * w
+        val len = (0.15f + rnd.nextFloat() * 0.3f) * h
+        drawLine(Steam.Copper.copy(alpha = 0.12f), Offset(x, 0f), Offset(x, len), strokeWidth = 1.5.dp.toPx())
+    }
+
+    // the neon edge, following the cut corners
+    val i = 5.dp.toPx()
+    val edge = Path().apply {
+        moveTo(i + cut, i)
+        lineTo(w - i, i)
+        lineTo(w - i, h - i - cut)
+        lineTo(w - i - cut, h - i)
+        lineTo(i, h - i)
+        lineTo(i, i + cut)
+        close()
+    }
+    drawPath(edge, glow.copy(alpha = 0.22f), style = Stroke(5.dp.toPx(), join = StrokeJoin.Round))
+    drawPath(edge, lit.copy(alpha = 0.9f), style = Stroke(1.5.dp.toPx(), join = StrokeJoin.Round))
+
+    val b = 13.dp.toPx()
+    bolt(Offset(b + 3.dp.toPx(), b + 3.dp.toPx())); bolt(Offset(w - b, b))
+    bolt(Offset(b, h - b)); bolt(Offset(w - b - 3.dp.toPx(), h - b - 3.dp.toPx()))
+}
+
+/** Dark wood panel with a brass frame and four rivets. In the Dieselpunk style it is gunmetal with cut corners, a neon edge and grime. */
 @Composable
 fun RivetedPanel(
     modifier: Modifier = Modifier,
@@ -152,18 +233,26 @@ fun RivetedPanel(
     fillAlpha: Float = 1f, // 1 = solid; lower lets the wallpaper show through the panel
     content: @Composable BoxScope.() -> Unit,
 ) {
-    val shape = RoundedCornerShape(10.dp)
+    val punk = Steam.punk
+    val shape = if (punk) CutCornerShape(topStart = 14.dp, bottomEnd = 14.dp) else RoundedCornerShape(10.dp)
+    val seed = remember { Random.nextInt() }
+    val lit = Steam.nixie.lit
+    val glow = Steam.nixie.glow
     Box(
         modifier
             .then(if (fillAlpha >= 0.99f) Modifier.shadow(6.dp, shape) else Modifier)
             .clip(shape)
             .background(Brush.verticalGradient(listOf(Steam.Walnut.copy(alpha = fillAlpha), Steam.Leather.copy(alpha = fillAlpha))))
-            .border(3.dp, Brush.verticalGradient(listOf(Steam.BrassLight, Steam.Brass, Steam.BrassDark)), shape)
+            .border(if (punk) 2.dp else 3.dp, Brush.verticalGradient(listOf(Steam.BrassLight, Steam.Brass, Steam.BrassDark)), shape)
             .then(if (onClick != null) Modifier.clickable(onClick = onClick) else Modifier)
             .drawBehind {
-                val i = 10.dp.toPx()
-                rivet(Offset(i, i)); rivet(Offset(size.width - i, i))
-                rivet(Offset(i, size.height - i)); rivet(Offset(size.width - i, size.height - i))
+                if (punk) {
+                    dieselTrim(seed, lit, glow)
+                } else {
+                    val i = 10.dp.toPx()
+                    rivet(Offset(i, i)); rivet(Offset(size.width - i, i))
+                    rivet(Offset(i, size.height - i)); rivet(Offset(size.width - i, size.height - i))
+                }
             }
             .padding(padding),
         content = content,
@@ -339,6 +428,10 @@ fun SteamFab(
             val r = size.minDimension / 2f
             drawCircle(Brush.radialGradient(listOf(Steam.BrassLight, Steam.Brass, Steam.BrassDark), center = c, radius = r), r, c)
             drawCircle(Steam.Soot, r * 0.80f, c)
+            if (Steam.punk) {
+                drawCircle(Steam.nixie.glow.copy(alpha = 0.3f), r * 0.80f, c, style = Stroke(r * 0.09f))
+                drawCircle(Steam.nixie.lit, r * 0.80f, c, style = Stroke(r * 0.03f))
+            }
             for (i in 0 until 8) {
                 val p = polar(c, r * 0.90f, i * 45.0)
                 drawCircle(Steam.BrassDark, r * 0.060f, p)
@@ -394,6 +487,10 @@ fun CogButton(
             drawCircle(Steam.Soot, r * 0.72f, c)
             val face = if (pressed) listOf(Steam.Brass, Steam.BrassDark) else listOf(Steam.BrassLight, Steam.Brass)
             drawCircle(Brush.radialGradient(face, center = c, radius = r * 0.66f), r * 0.66f, c)
+            if (Steam.punk) {
+                drawCircle(Steam.nixie.glow.copy(alpha = 0.3f), r * 0.72f, c, style = Stroke(r * 0.07f))
+                drawCircle(Steam.nixie.lit, r * 0.72f, c, style = Stroke(r * 0.025f))
+            }
         }
         val fs = (diameter.value * 0.56f / (text.length * 0.62f)).coerceIn(9f, 15f)
         Text(

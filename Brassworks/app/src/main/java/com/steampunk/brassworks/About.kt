@@ -96,7 +96,7 @@ private val HELP = listOf(
     ),
     InfoSection(
         "Settings",
-        "Workshop > Settings has the metal, nixie glow, gear speed, font, wallpaper, the fixed grid and its size (Auto, 5 × 10 or 4 × 9), hidden apps and your default home app.",
+        "Workshop > Settings has the style (Steampunk or Dieselpunk), the metal, nixie glow, gear speed, font, wallpaper, the fixed grid and its size (Auto, 5 × 10 or 4 × 9), hidden apps and your default home app.",
     ),
 )
 

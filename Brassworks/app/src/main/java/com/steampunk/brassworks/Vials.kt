@@ -234,7 +234,8 @@ private fun VialTube(fill: Float, bad: Float?, modifier: Modifier) {
             topLeft = Offset(r * 0.6f, h * 0.14f), size = Size(maxOf(0f, w - r * 1.2f), h * 0.16f),
             cornerRadius = CornerRadius(h * 0.08f),
         )
-        // brass rim
+        // rim: brass, or steel with a neon halo in Dieselpunk
+        if (Steam.punk) drawPath(glass, Steam.nixie.glow.copy(alpha = 0.28f), style = Stroke(width = rim * 2.4f))
         drawPath(
             glass,
             Brush.verticalGradient(listOf(Steam.BrassLight, Steam.Brass, Steam.BrassDark), startY = 0f, endY = h),

@@ -1872,6 +1872,15 @@ private fun SettingsScreen(
             ) {
                 // ---------------- Look ----------------
                 SettingsSection("Look") {
+                    Text("Style", style = MaterialTheme.typography.titleMedium, color = Steam.Parchment)
+                    Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                        SpeedChip("Steampunk", !Steam.punk, Modifier.weight(1f)) { Steam.chooseStyle(ctx, "steam") }
+                        SpeedChip("Dieselpunk", Steam.punk, Modifier.weight(1f)) { Steam.chooseStyle(ctx, "diesel") }
+                    }
+                    Text(
+                        "Steampunk is wood, brass and rivets. Dieselpunk is gunmetal with cut corners, neon edges and grime. In Dieselpunk the Metal below tints the steel and Nixie glow colours the neon.",
+                        style = MaterialTheme.typography.labelLarge, color = Steam.Steam,
+                    )
                     Text("Metal", style = MaterialTheme.typography.titleMedium, color = Steam.Parchment)
                     Palettes.chunked(4).forEach { rowOfFour ->
                         Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceEvenly) {
@@ -1880,7 +1889,7 @@ private fun SettingsScreen(
                     }
                     Text("Nixie glow", style = MaterialTheme.typography.titleMedium, color = Steam.Parchment)
                     Text(
-                        "Colours the nixie tubes and the neon of the Music player.",
+                        "Colours the nixie tubes, the Music player, and the neon edges in the Dieselpunk style.",
                         style = MaterialTheme.typography.labelLarge, color = Steam.Steam,
                     )
                     CogRow {
