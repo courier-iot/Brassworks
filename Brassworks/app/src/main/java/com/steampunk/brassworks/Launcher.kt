@@ -255,7 +255,7 @@ private fun open(ctx: Context, intent: Intent) {
     }
 }
 
-private fun batteryLevel(ctx: Context): Float {
+internal fun batteryLevel(ctx: Context): Float {
     val i = ctx.registerReceiver(null, IntentFilter(Intent.ACTION_BATTERY_CHANGED))
     val level = i?.getIntExtra(BatteryManager.EXTRA_LEVEL, -1) ?: -1
     val scale = i?.getIntExtra(BatteryManager.EXTRA_SCALE, -1) ?: -1
@@ -263,7 +263,7 @@ private fun batteryLevel(ctx: Context): Float {
 }
 
 /** (fraction used, GB free) */
-private fun storageUse(): Pair<Float, Float> = try {
+internal fun storageUse(): Pair<Float, Float> = try {
     val s = StatFs(Environment.getDataDirectory().path)
     val total = s.totalBytes.toFloat()
     val free = s.availableBytes.toFloat()
@@ -445,6 +445,7 @@ enum class WType(
     DIGITAL("Time plaque", "Large digital time and date", 340f, 100f, 150f, 80f),
     BOILER("Boiler pressure", "Battery level on a dial gauge", 164f, 140f, 110f, 110f, "Recommended: your charge at a glance"),
     CARGO("Cargo hold", "Storage used and free", 164f, 140f, 110f, 110f, "Recommended: spot a full phone early"),
+    VIALS("Vials", "Glass tubes that fill left to right. You choose the readings", 340f, 120f, 150f, 70f, "Tap the cog in Arrange mode to choose the readings"),
     ENGINE("Engine room", "RAM, battery heat and network flow on three dials", 340f, 140f, 200f, 110f, "Recommended: see what is loading the phone"),
     COMPASS("Compass", "A brass compass card that turns as you do", 164f, 164f, 110f, 110f, "Recommended: a working compass, hold the phone flat"),
     BAROMETER("Barometer", "Air pressure with a weather word", 164f, 140f, 110f, 110f, "Needs a pressure sensor, most phones have one"),
@@ -555,7 +556,7 @@ private fun decodePresets(s: String?): List<Preset> {
 /** Holds every widget's position and size (in dp), the grid rules, folders and presets. */
 class WidgetBoard(private val prefs: SharedPreferences, land: Boolean = false) {
     /** Portrait and landscape each keep their own layout, so rotating never piles the widgets up. */
-    private var landscape = land
+    private var landscape by mutableStateOf(land)
     private var reflow = false // this orientation has no layout of its own yet
 
     /** Which home page is showing (0 is the first) and how many pages there are. Page 0 keeps the original save keys. */
@@ -568,10 +569,30 @@ class WidgetBoard(private val prefs: SharedPreferences, land: Boolean = false) {
         (if (l) "widgets_land" else "widgets_v1") + (if (p == 0) "" else "_p$p")
     private fun loadFor(l: Boolean): List<WidgetItem>? {
         val own = decode(prefs.getString(layoutKey(l), null))
-        if (own != null) return own
+        if (own != null) {
+            if (stale(l, page)) reflow = true // saved at another grid size: re-snap once the screen size is known
+            return own
+        }
         val other = decode(prefs.getString(layoutKey(!l), null))
         if (other != null) reflow = true
         return other
+    }
+
+    /**
+     * The grid a layout was saved at is remembered, so pages and orientations that were not on screen
+     * when the grid size changed get re-snapped when you next visit them. These read prefs directly
+     * because loadFor runs before the other properties are set up.
+     */
+    private fun currentSig(): String =
+        if (prefs.getBoolean("grid", true)) (prefs.getString("grid_kind", "auto") ?: "auto") else "free"
+
+    private fun sigKey(l: Boolean, p: Int) = "gsig_" + layoutKey(l, p)
+
+    private fun stale(l: Boolean, p: Int): Boolean {
+        val now = currentSig()
+        if (now == "free") return false
+        val saved = prefs.getString(sigKey(l, p), null) ?: return false // saved before this feature: leave it alone
+        return saved != now
     }
 
     var items by mutableStateOf(loadFor(land))
@@ -674,14 +695,38 @@ class WidgetBoard(private val prefs: SharedPreferences, land: Boolean = false) {
 
     // ----- grid maths -----
 
-    private val gridCols: Int get() = if (areaW > 0f) maxOf(4, ((areaW + gap) / 94f).toInt()) else 4
+    /** "auto" fits as many cells as the screen allows. "5x10" and "4x9" are fixed (columns x rows in portrait). */
+    var gridKind by mutableStateOf(prefs.getString("grid_kind", "auto") ?: "auto")
+        private set
+
+    /** Fixed grids turn with the phone: 5 x 10 becomes 10 x 5 in landscape, so the cells stay roughly square. */
+    private val fixedCols: Int?
+        get() = when (gridKind) {
+            "5x10" -> if (landscape) 10 else 5
+            "4x9" -> if (landscape) 9 else 4
+            else -> null
+        }
+    private val fixedRows: Int?
+        get() = when (gridKind) {
+            "5x10" -> if (landscape) 5 else 10
+            "4x9" -> if (landscape) 4 else 9
+            else -> null
+        }
+
+    private val gridCols: Int
+        get() = fixedCols ?: if (areaW > 0f) maxOf(4, ((areaW + gap) / 94f).toInt()) else 4
     private val gap = 8f
     val columns: Int get() = gridCols
     val cellW: Float get() = if (areaW > 0f) (areaW - gap * (gridCols - 1)) / gridCols else 80f
-    val cellH: Float get() = cellW * 0.85f
+    val cellH: Float
+        get() {
+            val rows = fixedRows
+            return if (rows != null && areaH > 0f) (areaH - gap * (rows - 1)) / rows else cellW * 0.85f
+        }
     val stepX: Float get() = cellW + gap
     val stepY: Float get() = cellH + gap
-    val maxRows: Int get() = if (areaH > 0f) maxOf(1, ((areaH + gap) / stepY).toInt()) else 8
+    val maxRows: Int
+        get() = fixedRows ?: if (areaH > 0f) maxOf(1, ((areaH + gap) / stepY).toInt()) else 8
 
     private fun spanW(n: Int) = n * cellW + (n - 1) * gap
     private fun spanH(n: Int) = n * cellH + (n - 1) * gap
@@ -764,8 +809,17 @@ class WidgetBoard(private val prefs: SharedPreferences, land: Boolean = false) {
         prefs.edit().putBoolean("grid", on).apply()
         if (on) {
             items = items?.let { tidyList(it, false) }
-            persist()
         }
+        persist() // also records which grid this layout now fits
+    }
+
+    /** Switch between Auto, 5 x 10 and 4 x 9. This page is re-snapped now; the others when you next visit them. */
+    fun setGridKind(kind: String) {
+        if (kind == gridKind) return
+        gridKind = kind
+        prefs.edit().putString("grid_kind", kind).apply()
+        if (gridMode) items = items?.let { tidyList(it, false) }
+        persist()
     }
 
     /**
@@ -820,12 +874,16 @@ class WidgetBoard(private val prefs: SharedPreferences, land: Boolean = false) {
     /** Reads the current page for the current orientation, re-fitting it if it was last used the other way round. */
     private fun loadPage(): List<WidgetItem> {
         reflow = false
-        val own = decode(prefs.getString(layoutKey(landscape), null))
+        val own = decode(prefs.getString(layoutKey(landscape), null))?.let { fresh(it, landscape, page) }
         val other = decode(prefs.getString(layoutKey(!landscape), null))
         if (own == null) return if (other == null) emptyList() else tidyList(other, false)
         if (other != null && lastOrientation(page) != landscape) return syncWith(own, other)
         return own
     }
+
+    /** Re-snaps a saved layout if it was saved at a different grid size. Only for the orientation on screen. */
+    private fun fresh(list: List<WidgetItem>, l: Boolean, p: Int): List<WidgetItem> =
+        if (stale(l, p)) tidyList(list, false) else list
 
     fun goToPage(p: Int) {
         if (p == page || p !in 0 until pageCount || areaW <= 0f) return
@@ -860,11 +918,14 @@ class WidgetBoard(private val prefs: SharedPreferences, land: Boolean = false) {
             for (l in listOf(false, true)) {
                 val v = prefs.getString(layoutKey(l, q + 1), null)
                 if (v == null) ed.remove(layoutKey(l, q)) else ed.putString(layoutKey(l, q), v)
+                val sv = prefs.getString(sigKey(l, q + 1), null)
+                if (sv == null) ed.remove(sigKey(l, q)) else ed.putString(sigKey(l, q), sv)
             }
             ed.putBoolean("lo_$q", prefs.getBoolean("lo_${q + 1}", false))
         }
         val last = pageCount - 1
         ed.remove(layoutKey(false, last)).remove(layoutKey(true, last)).remove("lo_$last")
+            .remove(sigKey(false, last)).remove(sigKey(true, last))
         pageCount -= 1
         ed.putInt("pages", pageCount).apply()
         page = minOf(gone, pageCount - 1)
@@ -878,7 +939,7 @@ class WidgetBoard(private val prefs: SharedPreferences, land: Boolean = false) {
     fun moveToPage(id: Long, target: Int): Boolean {
         if (target == page || target !in 0 until pageCount) return false
         val w = items?.firstOrNull { it.id == id } ?: return false
-        val targetList = (decode(prefs.getString(layoutKey(landscape, target), null))
+        val targetList = (decode(prefs.getString(layoutKey(landscape, target), null))?.let { fresh(it, landscape, target) }
             ?: decode(prefs.getString(layoutKey(!landscape, target), null))?.let { tidyList(it, false) }).orEmpty()
         val occ = newOcc()
         markAll(occ, targetList)
@@ -893,6 +954,7 @@ class WidgetBoard(private val prefs: SharedPreferences, land: Boolean = false) {
         val moved = targetList + place(w, spot.first, spot.second, c, r)
         prefs.edit()
             .putString(layoutKey(landscape, target), encode(moved))
+            .putString(sigKey(landscape, target), currentSig())
             .putBoolean("lo_$target", landscape)
             .apply()
         items = items?.filter { it.id != id }
@@ -919,7 +981,7 @@ class WidgetBoard(private val prefs: SharedPreferences, land: Boolean = false) {
             persist()
             landscape = land
             reflow = false
-            val own = decode(prefs.getString(layoutKey(land), null))
+            val own = decode(prefs.getString(layoutKey(land), null))?.let { fresh(it, land, page) }
             items = if (own == null) tidyList(cur, false) else syncWith(own, cur)
             persist()
             return
@@ -1052,7 +1114,10 @@ class WidgetBoard(private val prefs: SharedPreferences, land: Boolean = false) {
     }
 
     fun persist() {
-        items?.let { prefs.edit().putString(layoutKey(landscape), encode(it)).putBoolean("lo_$page", landscape).apply() }
+        items?.let {
+            prefs.edit().putString(layoutKey(landscape), encode(it)).putString(sigKey(landscape, page), currentSig())
+                .putBoolean("lo_$page", landscape).apply()
+        }
     }
 
     // ----- presets -----
@@ -1886,6 +1951,18 @@ private fun SettingsScreen(
                         "Fixed grid", "Widgets snap into place and cannot overlap. Off lets them float anywhere.",
                         board.gridMode,
                     ) { board.useGrid(it) }
+                    if (board.gridMode) {
+                        Text("Grid size", style = MaterialTheme.typography.titleMedium, color = Steam.Parchment)
+                        Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                            SpeedChip("Auto", board.gridKind == "auto", Modifier.weight(1f)) { board.setGridKind("auto") }
+                            SpeedChip("5 × 10", board.gridKind == "5x10", Modifier.weight(1f)) { board.setGridKind("5x10") }
+                            SpeedChip("4 × 9", board.gridKind == "4x9", Modifier.weight(1f)) { board.setGridKind("4x9") }
+                        }
+                        Text(
+                            "Auto fits as many cells as the screen allows. 5 × 10 and 4 × 9 are columns by rows with the phone upright, and turn into 10 × 5 and 9 × 4 when you turn it on its side. Widgets are re-snapped when you change.",
+                            style = MaterialTheme.typography.labelLarge, color = Steam.Steam,
+                        )
+                    }
                     Text(
                         "Presets saves and applies layouts, and lets you rename or delete your own. Share sends your current layout as a text code. Import adds a code you received.",
                         style = MaterialTheme.typography.labelLarge, color = Steam.Steam,
@@ -2263,7 +2340,11 @@ private fun WidgetBody(
 ) {
     val ws = board.settingsOf(w.id)
     val is24w = when (ws.clock) { 12 -> false; 24 -> true; else -> is24 }
-    RivetedPanel(Modifier.fillMaxSize(), padding = if (w.type == WType.NIXIE) 8.dp else 16.dp, fillAlpha = ws.opacity) {
+    RivetedPanel(
+        Modifier.fillMaxSize(),
+        padding = when (w.type) { WType.NIXIE -> 8.dp; WType.VIALS -> 14.dp; else -> 16.dp },
+        fillAlpha = ws.opacity,
+    ) {
         when (w.type) {
             WType.CLOCK -> NixieContent(now, is24w)
             WType.NIXIE -> NixiePlainContent(now, is24w)
@@ -2271,6 +2352,7 @@ private fun WidgetBody(
             WType.DIGITAL -> DigitalContent(now, is24w)
             WType.BOILER -> GaugeContent(battery, true, ws.title.ifBlank { "Boiler pressure" }, "${(battery * 100).toInt()}% charged")
             WType.CARGO -> GaugeContent(storage.first, false, ws.title.ifBlank { "Cargo hold" }, "${(storage.first * 100).toInt()}% full")
+            WType.VIALS -> VialsContent(ws.vials, ws.fahrenheit)
             WType.ENGINE -> EngineRoomContent(ws.fahrenheit)
             WType.COMPASS -> CompassContent()
             WType.BAROMETER -> BarometerContent(ws.title.ifBlank { "Barometer" })

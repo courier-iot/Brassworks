@@ -28,10 +28,11 @@ data class WidgetSettings(
     val fahrenheit: Boolean = false,
     val title: String = "",         // blank = the widget's own title
     val opacity: Float = 1f,        // 0.2 to 1: how solid the panel behind the widget is
+    val vials: List<String> = DEFAULT_VIALS, // Vials widget: which readings, in order
 )
 
 internal fun encodeSettings(s: WidgetSettings): String =
-    JSONObject().put("c", s.clock).put("f", s.fahrenheit).put("t", s.title).put("o", s.opacity.toDouble()).toString()
+    JSONObject().put("c", s.clock).put("f", s.fahrenheit).put("t", s.title).put("o", s.opacity.toDouble()).put("v", s.vials.joinToString(",")).toString()
 
 internal fun decodeSettings(raw: String?): WidgetSettings {
     if (raw == null) return WidgetSettings()
@@ -42,6 +43,9 @@ internal fun decodeSettings(raw: String?): WidgetSettings {
             fahrenheit = o.optBoolean("f", false),
             title = o.optString("t", ""),
             opacity = o.optDouble("o", 1.0).toFloat().coerceIn(0.2f, 1f),
+            vials = o.optString("v", "").split(",")
+                .filter { k -> VIAL_METRICS.any { it.key == k } }.distinct().take(MAX_VIALS)
+                .ifEmpty { DEFAULT_VIALS },
         )
     } catch (e: Exception) {
         WidgetSettings()
@@ -52,7 +56,7 @@ internal fun decodeSettings(raw: String?): WidgetSettings {
 internal fun WType.hasClockFormat() = this == WType.CLOCK || this == WType.NIXIE || this == WType.ANALOG || this == WType.DIGITAL || this == WType.SUN
 
 /** Widgets that show a temperature. */
-internal fun WType.hasTemperature() = this == WType.ENGINE
+internal fun WType.hasTemperature() = this == WType.ENGINE || this == WType.VIALS
 
 /** Widgets with a heading you can rename. Folders and link folders are renamed from inside. */
 internal fun WType.hasTitle() = this == WType.BOILER || this == WType.CARGO || this == WType.BAROMETER ||
@@ -94,7 +98,33 @@ fun WidgetSettingsDialog(w: WidgetItem, board: WidgetBoard, onClose: () -> Unit)
                     }
                 }
 
-                if (w.type.hasTemperature()) {
+                if (w.type == WType.VIALS) {
+                    Text("Readings", style = MaterialTheme.typography.titleMedium, color = Steam.Parchment)
+                    Text(
+                        "Tap to add or remove a vial. They appear in the order you pick them. Choose 1 to $MAX_VIALS.",
+                        style = MaterialTheme.typography.labelLarge, color = Steam.Steam,
+                    )
+                    VIAL_METRICS.chunked(3).forEach { rowOf ->
+                        Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                            rowOf.forEach { m ->
+                                SpeedChip(m.label, m.key in cur.vials, Modifier.weight(1f)) {
+                                    change { s ->
+                                        val now = board.settingsOf(w.id).vials
+                                        s.copy(
+                                            vials = when {
+                                                m.key in now -> if (now.size > 1) now - m.key else now // keep at least one
+                                                now.size < MAX_VIALS -> now + m.key
+                                                else -> now
+                                            },
+                                        )
+                                    }
+                                }
+                            }
+                        }
+                    }
+                }
+
+                if (w.type == WType.ENGINE || (w.type == WType.VIALS && "heat" in cur.vials)) {
                     Text("Temperature", style = MaterialTheme.typography.titleMedium, color = Steam.Parchment)
                     Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
                         SpeedChip("Celsius", !cur.fahrenheit, Modifier.weight(1f)) { change { it.copy(fahrenheit = false) } }

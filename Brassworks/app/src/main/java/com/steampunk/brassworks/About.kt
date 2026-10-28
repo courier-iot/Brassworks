@@ -64,7 +64,7 @@ private val HELP = listOf(
     InfoSection(
         "Widget settings",
         "In Arrange mode, tap the cog on a widget. Depending on the widget you can choose a 12 or 24 hour clock, Celsius or Fahrenheit, " +
-            "a title of your own, how solid its panel is, and which page it lives on.",
+            "a title of your own, how solid its panel is, and which page it lives on. The Vials widget also lets you choose its readings.",
     ),
     InfoSection(
         "The Archive",
@@ -83,7 +83,7 @@ private val HELP = listOf(
     ),
     InfoSection(
         "Settings",
-        "Workshop > Settings has the metal, nixie glow, gear speed, font, wallpaper, the fixed grid, hidden apps and your default home app.",
+        "Workshop > Settings has the metal, nixie glow, gear speed, font, wallpaper, the fixed grid and its size (Auto, 5 × 10 or 4 × 9), hidden apps and your default home app.",
     ),
 )
 
