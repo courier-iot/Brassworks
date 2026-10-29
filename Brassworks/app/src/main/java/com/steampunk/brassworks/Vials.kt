@@ -209,7 +209,7 @@ fun VialsContent(keys: List<String>, fahrenheit: Boolean, colours: Map<String, I
             "battery" -> Reading(k, "Boiler", battery, "${(battery * 100).roundToInt()}%", 1f - battery,
                 "Boiler: ${(battery * 100).roundToInt()}% charge" + if (charging) ", charging" else "")
             "storage" -> Reading(k, "Cargo", storage, "${(storage * 100).roundToInt()}% full", storage,
-                "Cargo: ${(storage * 100).roundToInt()}% used, %.1f GB free".format(freeGb))
+                "Cargo: ${(storage * 100).roundToInt()}% used, " + "%.1f".format(freeGb) + " GB free")
             "memory" -> Reading(k, "Memory", mem, "${(mem * 100).roundToInt()}% used", mem,
                 "Memory: ${(mem * 100).roundToInt()}% used, ${memFreeMb.roundToInt()} MB free")
             "heat" -> if (heat < 0f) {

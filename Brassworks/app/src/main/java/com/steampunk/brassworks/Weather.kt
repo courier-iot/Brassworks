@@ -253,6 +253,7 @@ fun WeatherContent(prefs: SharedPreferences, fahrenheit: Boolean, title: String)
         val punk = Steam.punk
         val hi = if (punk) Steam.nixie.lit else Steam.BrassLight
         val tall = mh > 150.dp
+        val roomy = mh > 215.dp // enough height for the wind line as well as the three days
         val showDays = mw > 250.dp && w.days.size > 1
         val glyphSize = minOf(mh * (if (tall) 0.5f else 0.8f), mw * 0.3f)
         Column(Modifier.fillMaxSize().clickable { failed = false; prefs.edit().remove("wx_time").apply(); retry++ }) {
@@ -263,14 +264,14 @@ fun WeatherContent(prefs: SharedPreferences, fahrenheit: Boolean, title: String)
                     Text(title, fontSize = 12.sp, fontFamily = Steam.font, fontWeight = FontWeight.Bold, color = Steam.Steam, maxLines = 1)
                     Text(
                         degrees(w.temp, fahrenheit) + (if (fahrenheit) "F" else "C"),
-                        fontSize = minOf(mh.value * 0.34f, 38f).coerceAtLeast(18f).sp,
+                        fontSize = minOf(mh.value * 0.24f, 34f).coerceAtLeast(18f).sp,
                         fontFamily = Steam.font, fontWeight = FontWeight.Bold, color = hi, maxLines = 1,
                     )
                     Text(
                         weatherName(w.code) + ", feels " + degrees(w.feels, fahrenheit),
                         fontSize = 12.sp, fontFamily = Steam.font, color = Steam.Parchment, maxLines = 1,
                     )
-                    if (tall) {
+                    if (roomy || !showDays) {
                         Text(
                             "Wind " + (if (fahrenheit) "${(w.wind * 0.621f).roundToInt()} mph" else "${w.wind.roundToInt()} km/h") +
                                 (if (loading) "  (updating)" else if (failed) "  (offline)" else ""),
