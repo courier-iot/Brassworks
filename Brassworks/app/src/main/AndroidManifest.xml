@@ -7,6 +7,8 @@
     <uses-permission android:name="android.permission.REQUEST_DELETE_PACKAGES" />
     <!-- Only used by the Solar phase widget, and only after you tap to allow it -->
     <uses-permission android:name="android.permission.ACCESS_COARSE_LOCATION" />
+    <!-- Only used by the Weather widget, to ask open-meteo.com for the forecast. Nothing else in Brassworks goes online -->
+    <uses-permission android:name="android.permission.INTERNET" />
     <!-- Only used by the Agenda widget, and only after you tap Allow. The calendar is read on the phone and goes nowhere -->
     <uses-permission android:name="android.permission.READ_CALENDAR" />
     <!-- Lets the Countdown widget ring with a notification. Asked once, the first time you start a timer or alarm -->
