@@ -18,8 +18,13 @@ private class InfoSection(val heading: String, val body: String)
 private val CREDITS = listOf(
     InfoSection(
         "Brassworks 1.0",
-        "A steampunk home screen, written in Kotlin with Jetpack Compose. Brassworks has no internet permission of its own. " +
+        "A steampunk home screen, written in Kotlin with Jetpack Compose. The only thing in Brassworks that goes online is the Weather widget. " +
             "Links and web searches open in your browser, and your layouts, notes and settings stay on this phone.",
+    ),
+    InfoSection(
+        "Weather",
+        "Weather data by Open-Meteo.com, used under the Creative Commons Attribution 4.0 licence (CC BY 4.0). " +
+            "The Weather widget sends only your location, rounded to about a kilometre, to open-meteo.com, and keeps the last answer on the phone.",
     ),
     InfoSection(
         "Victorian font",
@@ -61,8 +66,8 @@ private val HELP = listOf(
     ),
     InfoSection(
         "Pages",
-        "Swipe left or right on the home screen to change page, or tap the dots at the bottom. Workshop > Pages adds and removes pages. " +
-            "Each page has its own widgets. Pressing Home takes you back to page 1.",
+        "Swipe left or right on the home screen to change page, or tap the dots at the bottom. Workshop > Pages adds, removes and reorders pages, and can give a page its own wallpaper. " +
+            "Each page has its own widgets. Pressing Home takes you back to page 1. In Arrange mode, drag a widget past the left or right edge to send it to the next page.",
     ),
     InfoSection(
         "Arranging widgets",
@@ -72,7 +77,7 @@ private val HELP = listOf(
     InfoSection(
         "Widget settings",
         "In Arrange mode, tap the cog on a widget. Depending on the widget you can choose a 12 or 24 hour clock, Celsius or Fahrenheit, " +
-            "a title of your own, how solid its panel is, and which page it lives on. The Vials widget also lets you choose its readings.",
+            "a title of your own, how solid its panel is, and which page it lives on. The Vials widget also lets you choose its readings and a colour for each. Tap a vial to see its exact figure.",
     ),
     InfoSection(
         "The Archive",
@@ -89,6 +94,17 @@ private val HELP = listOf(
         "Countdown is a timer and an alarm clock: tap its title to switch between them. They use Android's alarm service, so they ring even when the launcher is closed. " +
             "Android asks once if the launcher may send notifications, which is how it rings. Coming back to the home screen, tapping the notification or pressing Quiet stops the sound. " +
             "Agenda lists what is coming up in your calendar after you tap Allow. Lantern switches your torch on and off with a tap and needs no permission.",
+    ),
+    InfoSection(
+        "Weather",
+        "The Weather widget shows now and the next three days. Tap Allow once so it can find roughly where you are; it uses the internet only for this, " +
+            "and sends only your location rounded to about a kilometre. The cog sets Celsius or Fahrenheit.",
+    ),
+    InfoSection(
+        "Widgets from other apps",
+        "Add > Widget from another app lists the widgets your other apps offer. Android may ask once to let Brassworks show it, and some open their own set-up screen first. " +
+            "They are drawn by the other app, so they keep its look rather than the brass one. Move and resize them in Arrange mode. " +
+            "They belong to this phone, so presets and backups leave them out.",
     ),
     InfoSection(
         "Recent apps and Brass icons",

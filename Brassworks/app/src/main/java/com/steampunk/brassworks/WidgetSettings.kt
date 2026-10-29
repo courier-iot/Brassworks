@@ -1,7 +1,13 @@
 package com.steampunk.brassworks
 
 import android.widget.Toast
+import androidx.compose.foundation.background
+import androidx.compose.foundation.border
+import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.*
+import androidx.compose.foundation.shape.CircleShape
+import androidx.compose.ui.draw.clip
+import androidx.compose.ui.graphics.Color
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.material3.MaterialTheme
@@ -29,10 +35,15 @@ data class WidgetSettings(
     val title: String = "",         // blank = the widget's own title
     val opacity: Float = 1f,        // 0.2 to 1: how solid the panel behind the widget is
     val vials: List<String> = DEFAULT_VIALS, // Vials widget: which readings, in order
+    val vialColors: Map<String, Int> = emptyMap(), // Vials widget: own liquid colour per reading (ARGB). Missing = automatic
 )
 
-internal fun encodeSettings(s: WidgetSettings): String =
-    JSONObject().put("c", s.clock).put("f", s.fahrenheit).put("t", s.title).put("o", s.opacity.toDouble()).put("v", s.vials.joinToString(",")).toString()
+internal fun encodeSettings(s: WidgetSettings): String {
+    val vc = JSONObject()
+    s.vialColors.forEach { (k, v) -> vc.put(k, v) }
+    return JSONObject().put("c", s.clock).put("f", s.fahrenheit).put("t", s.title).put("o", s.opacity.toDouble())
+        .put("v", s.vials.joinToString(",")).put("vc", vc).toString()
+}
 
 internal fun decodeSettings(raw: String?): WidgetSettings {
     if (raw == null) return WidgetSettings()
@@ -46,6 +57,9 @@ internal fun decodeSettings(raw: String?): WidgetSettings {
             vials = o.optString("v", "").split(",")
                 .filter { k -> VIAL_METRICS.any { it.key == k } }.distinct().take(MAX_VIALS)
                 .ifEmpty { DEFAULT_VIALS },
+            vialColors = o.optJSONObject("vc")?.let { vc ->
+                vc.keys().asSequence().filter { k -> VIAL_METRICS.any { it.key == k } }.associateWith { vc.optInt(it, 0) }
+            }.orEmpty(),
         )
     } catch (e: Exception) {
         WidgetSettings()
@@ -57,13 +71,14 @@ internal fun WType.hasClockFormat() = this == WType.CLOCK || this == WType.NIXIE
     this == WType.TIMER || this == WType.AGENDA
 
 /** Widgets that show a temperature. */
-internal fun WType.hasTemperature() = this == WType.ENGINE || this == WType.VIALS
+internal fun WType.hasTemperature() = this == WType.ENGINE || this == WType.VIALS || this == WType.WEATHER
 
 /** Widgets with a heading you can rename. Folders and link folders are renamed from inside. */
 internal fun WType.hasTitle() = this == WType.BOILER || this == WType.CARGO || this == WType.BAROMETER ||
-    this == WType.MEMO || this == WType.SHELF || this == WType.PICKS || this == WType.AGENDA
+    this == WType.MEMO || this == WType.SHELF || this == WType.PICKS || this == WType.AGENDA || this == WType.WEATHER
 
 internal fun WType.defaultTitle(): String = when (this) {
+    WType.WEATHER -> "Weather"
     WType.AGENDA -> "Agenda"
     WType.BOILER -> "Boiler pressure"
     WType.CARGO -> "Cargo hold"
@@ -143,7 +158,35 @@ fun WidgetSettingsDialog(w: WidgetItem, board: WidgetBoard, onClose: () -> Unit)
                     }
                 }
 
-                if (w.type == WType.ENGINE || (w.type == WType.VIALS && "heat" in cur.vials)) {
+                if (w.type == WType.VIALS) {
+                    Text("Liquid colour", style = MaterialTheme.typography.titleMedium, color = Steam.Parchment)
+                    Text(
+                        "Auto turns amber, then copper, as a level gets worrying. Pick a colour to keep a vial the same. Tap a vial on the home screen to see its exact figure.",
+                        style = MaterialTheme.typography.labelLarge, color = Steam.Steam,
+                    )
+                    cur.vials.forEach { key ->
+                        val metric = VIAL_METRICS.firstOrNull { it.key == key } ?: return@forEach
+                        Row(Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(6.dp)) {
+                            Text(metric.label, Modifier.width(64.dp), style = MaterialTheme.typography.labelLarge, color = Steam.Parchment, maxLines = 1)
+                            VIAL_COLOURS.forEach { (name, argb) ->
+                                val chosen = cur.vialColors[key] == argb
+                                val swatch = if (argb == null) Steam.Soot else Color(argb)
+                                Box(
+                                    Modifier.size(28.dp).clip(CircleShape).background(swatch)
+                                        .border(if (chosen) 3.dp else 1.dp, if (chosen) Steam.BrassLight else Steam.Steam, CircleShape)
+                                        .clickable {
+                                            change { s ->
+                                                s.copy(vialColors = if (argb == null) s.vialColors - key else s.vialColors + (key to argb))
+                                            }
+                                        },
+                                    contentAlignment = Alignment.Center,
+                                ) { if (argb == null) Text("A", color = Steam.Parchment, style = MaterialTheme.typography.labelLarge) }
+                            }
+                        }
+                    }
+                }
+
+                if (w.type == WType.ENGINE || w.type == WType.WEATHER || (w.type == WType.VIALS && "heat" in cur.vials)) {
                     Text("Temperature", style = MaterialTheme.typography.titleMedium, color = Steam.Parchment)
                     Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
                         SpeedChip("Celsius", !cur.fahrenheit, Modifier.weight(1f)) { change { it.copy(fahrenheit = false) } }

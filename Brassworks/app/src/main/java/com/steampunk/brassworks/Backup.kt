@@ -35,19 +35,22 @@ object Backup {
     private const val MAX_BYTES = 48L * 1024 * 1024
 
     /** Private files that belong in a backup. The pattern also stops a hand-edited file from writing anywhere else. */
-    private val backedUpFiles = Regex("wallpaper\\.jpg|custom_font|pw_\\d+\\.jpg")
+    private val backedUpFiles = Regex("wallpaper\\.jpg|wallpaper_p\\d+\\.jpg|custom_font|pw_\\d+\\.jpg")
 
     /** Everything that makes up the widget layout, including each widget's own notes, folders, links and settings. */
     private val layoutKeys = Regex(
         "(widgets_v1|widgets_land)(_p\\d+)?|gsig_.*|lo_\\d+|pages|grid|grid_done|grid_kind|fab_.*|" +
-            "(wset|lname|llinks|note|fname|fapps|chr_acc|chr_start|chr_lap|ch_run|ch_base|ch_acc|ch_lap|tm_mode|tm_set|tm_end|tm_left|al_min|al_at)_\\d+",
+            "(wset|lname|llinks|note|fname|fapps|chr_acc|chr_start|chr_lap|ch_run|ch_base|ch_acc|ch_lap|tm_mode|tm_set|tm_end|tm_left|al_min|al_at|aw)_\\d+",
     )
 
     /** The look and feel: colours, style, font, gear speed and the turning-gears switch. */
     private val lookKeys = listOf("theme", "nixie", "style", "cust_metal", "cust_wood", "cust_neon", "gear", "font", "wall_dim", "anim", "tint_icons")
 
     /** Notes the launcher keeps about itself (reminders and safe mode). They are not part of a backup. */
-    private val bookkeepingKeys = setOf("boot_count", "safe_stage", "safe_notice", "last_backup", "remind_snooze", "first_seen")
+    private val bookkeepingKeys = setOf(
+        "boot_count", "safe_stage", "safe_notice", "last_backup", "remind_snooze", "first_seen",
+        "wx_json", "wx_time", "wx_spot", // the Weather widget's last answer
+    )
 
     private const val DAY = 24L * 60 * 60 * 1000
     private const val REMIND_AFTER_DAYS = 30L
@@ -121,6 +124,7 @@ object Backup {
         val saved = JSONObject()
         for ((key, value) in prefs(ctx).all) {
             if (key in bookkeepingKeys) continue
+            if (key.startsWith("aw_")) continue // other apps' widgets are tied to this phone and cannot be carried to another
             val entry = JSONObject()
             when (value) {
                 is String -> entry.put("t", "s").put("v", value)
@@ -222,9 +226,12 @@ object Backup {
     fun resetLayout(ctx: Context) {
         TimerEngine.cancelAll(ctx) // timers and alarms belong to widgets that are about to go
         val p = prefs(ctx)
+        AppWidgets.releaseAll(ctx, p) // so do the widgets borrowed from other apps
         val ed = p.edit()
         p.all.keys.filter { layoutKeys.matches(it) }.forEach { ed.remove(it) }
         ed.commit()
+        // the extra pages are gone, so their wallpapers go too
+        for (i in 0 until 16) File(ctx.filesDir, "wallpaper_p$i.jpg").delete()
     }
 
     /**
@@ -236,6 +243,7 @@ object Backup {
         lookKeys.forEach { ed.remove(it) }
         ed.commit()
         File(ctx.filesDir, "wallpaper.jpg").delete()
+        for (i in 0 until 16) File(ctx.filesDir, "wallpaper_p$i.jpg").delete()
         File(ctx.filesDir, "custom_font").delete()
         Steam.customMetal = Color(0xFFB5883E)
         Steam.customWood = Color(0xFF3E2A1E)

@@ -16,6 +16,7 @@ import androidx.compose.runtime.SideEffect
 import androidx.compose.runtime.compositionLocalOf
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableFloatStateOf
+import androidx.compose.runtime.mutableStateMapOf
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
@@ -259,6 +260,7 @@ object Steam {
         wallDim = p.getFloat("wall_dim", 0.45f)
         tintIcons = p.getBoolean("tint_icons", false)
         readWallpaper(ctx)
+        readPageWallpapers(ctx)
     }
 
     private fun readVictorian(ctx: Context) {
@@ -293,17 +295,17 @@ object Steam {
         }
     }
 
-    /** Shrinks the picture to a sensible size, fixes its rotation, and keeps a private copy. */
-    fun installWallpaper(ctx: Context, uri: Uri): Boolean {
+    /** Reads a picture, shrinks it to a sensible size and fixes its rotation. Null if it cannot be used. */
+    private fun decodePicture(ctx: Context, uri: Uri): Bitmap? {
         return try {
             val cr = ctx.contentResolver
             val bounds = BitmapFactory.Options().apply { inJustDecodeBounds = true }
             cr.openInputStream(uri)?.use { BitmapFactory.decodeStream(it, null, bounds) }
-            if (bounds.outWidth <= 0 || bounds.outHeight <= 0) return false
+            if (bounds.outWidth <= 0 || bounds.outHeight <= 0) return null
             var sample = 1
             while (maxOf(bounds.outWidth, bounds.outHeight) / sample > 1800) sample *= 2
             val opts = BitmapFactory.Options().apply { inSampleSize = sample }
-            var bmp = cr.openInputStream(uri)?.use { BitmapFactory.decodeStream(it, null, opts) } ?: return false
+            var bmp = cr.openInputStream(uri)?.use { BitmapFactory.decodeStream(it, null, opts) } ?: return null
             val turn = try {
                 cr.openInputStream(uri)?.use { stream ->
                     when (ExifInterface(stream).getAttributeInt(ExifInterface.TAG_ORIENTATION, ExifInterface.ORIENTATION_NORMAL)) {
@@ -320,12 +322,98 @@ object Steam {
                 val m = Matrix().apply { postRotate(turn) }
                 bmp = Bitmap.createBitmap(bmp, 0, 0, bmp.width, bmp.height, m, true)
             }
+            bmp
+        } catch (e: Exception) {
+            null
+        }
+    }
+
+    /** Shrinks the picture to a sensible size, fixes its rotation, and keeps a private copy. */
+    fun installWallpaper(ctx: Context, uri: Uri): Boolean {
+        val bmp = decodePicture(ctx, uri) ?: return false
+        return try {
             wallFile(ctx).outputStream().use { bmp.compress(Bitmap.CompressFormat.JPEG, 90, it) }
             wallpaper = bmp.asImageBitmap()
             true
         } catch (e: Exception) {
             false
         }
+    }
+
+    // ----- a wallpaper for one page only -----
+
+    /** Pages that have a picture of their own. Pages without one show the main wallpaper. */
+    val pageWallpapers = mutableStateMapOf<Int, ImageBitmap>()
+
+    private const val PAGE_WALL_LIMIT = 16
+
+    private fun pageWallFile(ctx: Context, page: Int) = File(ctx.filesDir, "wallpaper_p$page.jpg")
+
+    /** The picture to draw behind a page: its own if it has one, otherwise the main wallpaper. */
+    fun wallpaperFor(page: Int): ImageBitmap? = pageWallpapers[page] ?: wallpaper
+
+    fun hasPageWallpaper(page: Int) = pageWallpapers.containsKey(page)
+
+    private fun readPageWallpapers(ctx: Context) {
+        pageWallpapers.clear()
+        for (p in 0 until PAGE_WALL_LIMIT) {
+            val f = pageWallFile(ctx, p)
+            if (!f.exists()) continue
+            try {
+                BitmapFactory.decodeFile(f.path)?.let { pageWallpapers[p] = it.asImageBitmap() }
+            } catch (e: Exception) {
+                // an unreadable picture is skipped
+            }
+        }
+    }
+
+    fun installPageWallpaper(ctx: Context, page: Int, uri: Uri): Boolean {
+        val bmp = decodePicture(ctx, uri) ?: return false
+        return try {
+            pageWallFile(ctx, page).outputStream().use { bmp.compress(Bitmap.CompressFormat.JPEG, 90, it) }
+            pageWallpapers[page] = bmp.asImageBitmap()
+            true
+        } catch (e: Exception) {
+            false
+        }
+    }
+
+    fun removePageWallpaper(ctx: Context, page: Int) {
+        pageWallFile(ctx, page).delete()
+        pageWallpapers.remove(page)
+    }
+
+    /** Two pages swapped places, so their pictures swap too. */
+    fun swapPageWallpapers(ctx: Context, a: Int, b: Int) {
+        val fa = pageWallFile(ctx, a)
+        val fb = pageWallFile(ctx, b)
+        val tmp = File(ctx.filesDir, "wallpaper_swap.tmp")
+        val hadA = fa.exists()
+        val hadB = fb.exists()
+        try {
+            if (hadA) fa.copyTo(tmp, overwrite = true)
+            if (hadB) fb.copyTo(fa, overwrite = true) else fa.delete()
+            if (hadA) tmp.copyTo(fb, overwrite = true) else fb.delete()
+            tmp.delete()
+        } catch (e: Exception) {
+            // leave whatever was copied
+        }
+        readPageWallpapers(ctx)
+    }
+
+    /** A page was removed: its picture goes and the later pages' pictures move down one. */
+    fun closeGapAfterPage(ctx: Context, gone: Int, pageCountBefore: Int) {
+        pageWallFile(ctx, gone).delete()
+        try {
+            for (p in gone + 1 until pageCountBefore) {
+                val f = pageWallFile(ctx, p)
+                if (f.exists()) f.copyTo(pageWallFile(ctx, p - 1), overwrite = true) else pageWallFile(ctx, p - 1).delete()
+            }
+            pageWallFile(ctx, pageCountBefore - 1).delete()
+        } catch (e: Exception) {
+            // leave whatever was copied
+        }
+        readPageWallpapers(ctx)
     }
 
     private val presetWall = Regex("pw_\\d+\\.jpg")

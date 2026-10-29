@@ -459,6 +459,7 @@ enum class WType(
     BAROMETER("Barometer", "Air pressure with a weather word", 164f, 140f, 110f, 110f, "Needs a pressure sensor, most phones have one"),
     MOON("Moon phase", "Tonight's moon and the next full moon", 164f, 164f, 110f, 110f, "Recommended: no permissions needed"),
     SUN("Solar phase", "Sunrise, sunset and the sun's path", 340f, 140f, 200f, 100f, "Asks for your rough location once"),
+    WEATHER("Weather", "Now and the next three days, from the free open-meteo.com service", 340f, 190f, 200f, 100f, "Uses the internet. Sends only your rounded location"),
     SOLAR("Solar system", "The planets where they really are today. Tap one to inspect it", 340f, 290f, 200f, 200f, "Recommended: no internet needed"),
     CHRONO("Chronometer", "Stopwatch with a lap. Keeps counting while you are away", 340f, 140f, 300f, 100f, "Recommended: a brass stopwatch"),
     TIMER("Countdown", "A countdown timer and an alarm clock. They ring even when the launcher is closed", 340f, 150f, 300f, 130f, "Asks to send notifications once, so it can ring"),
@@ -470,6 +471,7 @@ enum class WType(
     FOLDER("Folder", "A named bundle of apps. Tap to open it", 164f, 150f, 110f, 110f, "Recommended: keeps related apps tidy"),
     LINKS("Link folder", "A named bundle of web links. Tap to open it", 164f, 150f, 110f, 110f, "Recommended: bookmarks on your home screen"),
     PICKS("Chief Engineer's picks", "Apps you open most, learned on this phone", 340f, 210f, 110f, 100f, "Recommended: suggestions from your habits"),
+    APPWIDGET("Widget from another app", "Shows a widget that another app provides, drawn as that app designed it", 300f, 160f, 80f, 60f, "Android may ask permission. Looks as the other app made it"),
 }
 
 data class WidgetItem(val id: Long, val type: WType, val x: Float, val y: Float, val w: Float, val h: Float)
@@ -940,6 +942,7 @@ class WidgetBoard(private val prefs: SharedPreferences, land: Boolean = false, p
         val last = pageCount - 1
         ed.remove(layoutKey(false, last)).remove(layoutKey(true, last)).remove("lo_$last")
             .remove(sigKey(false, last)).remove(sigKey(true, last))
+        Steam.closeGapAfterPage(appCtx, gone, pageCount)
         pageCount -= 1
         ed.putInt("pages", pageCount).apply()
         page = minOf(gone, pageCount - 1)
@@ -947,6 +950,36 @@ class WidgetBoard(private val prefs: SharedPreferences, land: Boolean = false, p
         items = list
         loadExtras(list)
         persist()
+    }
+
+    /** Swaps the page you are on with its neighbour (-1 = earlier, +1 = later) and follows it. Widgets and pictures go along. */
+    fun movePageBy(dir: Int): Boolean {
+        val from = page
+        val to = from + dir
+        if (to !in 0 until pageCount || areaW <= 0f) return false
+        persist()
+        val ed = prefs.edit()
+        for (l in listOf(false, true)) {
+            val a = prefs.getString(layoutKey(l, from), null)
+            val b = prefs.getString(layoutKey(l, to), null)
+            if (b == null) ed.remove(layoutKey(l, from)) else ed.putString(layoutKey(l, from), b)
+            if (a == null) ed.remove(layoutKey(l, to)) else ed.putString(layoutKey(l, to), a)
+            val sa = prefs.getString(sigKey(l, from), null)
+            val sb = prefs.getString(sigKey(l, to), null)
+            if (sb == null) ed.remove(sigKey(l, from)) else ed.putString(sigKey(l, from), sb)
+            if (sa == null) ed.remove(sigKey(l, to)) else ed.putString(sigKey(l, to), sa)
+        }
+        val la = prefs.getBoolean("lo_$from", false)
+        val lb = prefs.getBoolean("lo_$to", false)
+        ed.putBoolean("lo_$from", lb).putBoolean("lo_$to", la)
+        ed.apply()
+        Steam.swapPageWallpapers(appCtx, from, to)
+        page = to
+        val list = loadPage()
+        items = list
+        loadExtras(list)
+        persist()
+        return true
     }
 
     /** Moves a widget (keeping its notes and settings) to a free spot on another page. Returns false if that page is full. */
@@ -1022,17 +1055,61 @@ class WidgetBoard(private val prefs: SharedPreferences, land: Boolean = false, p
 
     private var start: WidgetItem? = null
 
-    fun begin(id: Long) { start = items?.firstOrNull { it.id == id } }
+    /** How far (in dp) a drag has pushed past the left (negative) or right (positive) edge. */
+    private var edgePush = 0f
+
+    fun begin(id: Long) {
+        start = items?.firstOrNull { it.id == id }
+        edgePush = 0f
+    }
 
     private fun update(id: Long, f: (WidgetItem) -> WidgetItem) {
         items = items?.map { if (it.id == id) f(it) else it }
     }
 
-    fun move(id: Long, dx: Float, dy: Float) = update(id) {
-        it.copy(
-            x = (it.x + dx).coerceIn(0f, maxOf(0f, areaW - it.w)),
-            y = (it.y + dy).coerceIn(0f, maxOf(0f, areaH - it.h)),
-        )
+    fun move(id: Long, dx: Float, dy: Float) {
+        val cur = items?.firstOrNull { it.id == id } ?: return
+        val maxX = maxOf(0f, areaW - cur.w)
+        val rawX = cur.x + dx
+        edgePush = when {
+            rawX < 0f -> (if (edgePush < 0f) edgePush else 0f) + rawX
+            rawX > maxX -> (if (edgePush > 0f) edgePush else 0f) + (rawX - maxX)
+            else -> 0f
+        }
+        update(id) {
+            it.copy(
+                x = rawX.coerceIn(0f, maxX),
+                y = (it.y + dy).coerceIn(0f, maxOf(0f, areaH - it.h)),
+            )
+        }
+    }
+
+    /**
+     * When a drag ends after pushing the widget well past a side edge, sends it to the next page on that side
+     * (a new page if you push past the last one). Returns 0 = nothing happened, 1 = moved, 2 = no room there.
+     */
+    fun sendToEdge(id: Long): Int {
+        val push = edgePush
+        edgePush = 0f
+        if (kotlin.math.abs(push) < 48f) return 0
+        val target = page + if (push < 0f) -1 else 1
+        if (target < 0) return 0
+        var created = false
+        if (target >= pageCount) {
+            if (pageCount >= MAX_PAGES) return 2
+            pageCount += 1
+            prefs.edit().putInt("pages", pageCount).apply()
+            created = true
+        }
+        if (!moveToPage(id, target)) {
+            if (created) {
+                pageCount -= 1
+                prefs.edit().putInt("pages", pageCount).apply()
+            }
+            return 2
+        }
+        goToPage(target)
+        return 1
     }
 
     fun resize(id: Long, dw: Float, dh: Float) = update(id) {
@@ -1127,6 +1204,8 @@ class WidgetBoard(private val prefs: SharedPreferences, land: Boolean = false, p
             .remove("ch_run_$id").remove("ch_base_$id").remove("ch_acc_$id").remove("ch_lap_$id")
             .remove("tm_mode_$id").remove("tm_set_$id").remove("tm_end_$id").remove("tm_left_$id").remove("al_min_$id").remove("al_at_$id").apply()
         TimerEngine.forget(appCtx, id)
+        AppWidgets.release(appCtx, prefs.getInt("aw_$id", -1))
+        prefs.edit().remove("aw_$id").apply()
     }
 
     fun persist() {
@@ -1139,7 +1218,8 @@ class WidgetBoard(private val prefs: SharedPreferences, land: Boolean = false, p
     // ----- presets -----
 
     private fun snapshot(name: String): Preset? {
-        val list = items.orEmpty()
+        // another app's widget belongs to this phone only, so presets leave it out
+        val list = items.orEmpty().filter { it.type != WType.APPWIDGET }
         if (list.isEmpty()) return null
         val tidy = tidyList(list, false)
         return Preset(
@@ -1298,6 +1378,7 @@ fun LauncherRoot(tick: Int, homeSignal: Int, active: Boolean = true) {
     var settings by remember { mutableStateOf(false) }
     var fabMenu by remember { mutableStateOf(false) }
     var picker by remember { mutableStateOf(false) }
+    var appWidgetChooser by remember { mutableStateOf(false) }
     var editing by remember { mutableStateOf(false) }
     var openFolder by remember { mutableStateOf<Long?>(null) }
     var openLinks by remember { mutableStateOf<Long?>(null) }
@@ -1306,6 +1387,12 @@ fun LauncherRoot(tick: Int, homeSignal: Int, active: Boolean = true) {
     var folderPick by remember { mutableStateOf<AppInfo?>(null) }
     var pagesDialog by remember { mutableStateOf(false) }
     var confirmRemovePage by remember { mutableStateOf(false) }
+    val pickPageWall = rememberLauncherForActivityResult(ActivityResultContracts.OpenDocument()) { uri ->
+        if (uri != null) {
+            val ok = Steam.installPageWallpaper(ctx, board.page, uri)
+            Toast.makeText(ctx, if (ok) "Page wallpaper set" else "That picture could not be used.", Toast.LENGTH_LONG).show()
+        }
+    }
     var widgetDialog by remember { mutableStateOf<Long?>(null) }
     var creditsDialog by remember { mutableStateOf(false) }
     var helpDialog by remember { mutableStateOf(false) }
@@ -1848,6 +1935,16 @@ fun LauncherRoot(tick: Int, homeSignal: Int, active: Boolean = true) {
                                 ) { board.goToPage(i); pagesDialog = false }
                             }
                         }
+                        Text(
+                            "Page ${board.page + 1}: move it, or give it a wallpaper of its own. Pages without one show your main wallpaper.",
+                            style = MaterialTheme.typography.labelLarge, color = Steam.Steam,
+                        )
+                        CogRow {
+                            if (board.page > 0) CogButton("Earlier") { board.movePageBy(-1) }
+                            if (board.page < board.pageCount - 1) CogButton("Later") { board.movePageBy(1) }
+                            CogButton("Picture") { pickPageWall.launch(arrayOf("image/*")) }
+                            if (Steam.hasPageWallpaper(board.page)) CogButton("No picture") { Steam.removePageWallpaper(ctx, board.page) }
+                        }
                         CogRow {
                             CogButton("Add") {
                                 if (board.addPage() < 0) {
@@ -1982,6 +2079,35 @@ fun LauncherRoot(tick: Int, homeSignal: Int, active: Boolean = true) {
         if (creditsDialog) CreditsDialog { creditsDialog = false }
         if (helpDialog) HelpDialog { helpDialog = false }
 
+        // Widgets that other apps provide
+        if (appWidgetChooser) {
+            AppWidgetChooser(
+                onPick = { info ->
+                    appWidgetChooser = false
+                    val activity = AppWidgets.activityOf(ctx)
+                    if (activity == null) {
+                        Toast.makeText(ctx, "Could not start. Try again.", Toast.LENGTH_LONG).show()
+                    } else {
+                        AppWidgets.begin(activity, info) { awId ->
+                            if (awId < 0) {
+                                Toast.makeText(ctx, "That widget was not added.", Toast.LENGTH_LONG).show()
+                            } else {
+                                val id = board.add(WType.APPWIDGET)
+                                if (id < 0L) {
+                                    AppWidgets.release(ctx, awId)
+                                    Toast.makeText(ctx, "No room left on the grid. Remove or shrink a widget first.", Toast.LENGTH_LONG).show()
+                                } else {
+                                    prefs.edit().putInt("aw_$id", awId).apply()
+                                    editing = true
+                                }
+                            }
+                        }
+                    }
+                },
+                onClose = { appWidgetChooser = false },
+            )
+        }
+
         // Widget picker
         if (picker) {
             Dialog(onDismissRequest = { picker = false }) {
@@ -1994,6 +2120,11 @@ fun LauncherRoot(tick: Int, homeSignal: Int, active: Boolean = true) {
                         ) {
                             WType.entries.forEach { t ->
                                 PickerRow(t) {
+                                    if (t == WType.APPWIDGET) {
+                                        picker = false
+                                        appWidgetChooser = true
+                                        return@PickerRow
+                                    }
                                     val id = board.add(t)
                                     picker = false
                                     if (id < 0L) {
@@ -2472,7 +2603,7 @@ private fun HomeScreen(
             )
         },
     ) {
-        SteamBackdrop()
+        SteamBackdrop(wall = Steam.wallpaperFor(board.page))
         // Press and hold on empty space to rearrange widgets
         Box(Modifier.fillMaxSize().pointerInput(Unit) { detectTapGestures(onTap = { dropFocus(ctx, view, focus) }, onLongPress = { onEnterEdit() }) })
 
@@ -2562,6 +2693,7 @@ private fun HomeScreen(
 /** Positions one widget and, in edit mode, adds the move / resize / remove controls. */
 @Composable
 private fun WidgetHost(w: WidgetItem, board: WidgetBoard, editing: Boolean, onSettings: () -> Unit, content: @Composable () -> Unit) {
+    val hostCtx = LocalContext.current
     val wd = if (board.areaW > 0f) w.w.coerceAtMost(board.areaW) else w.w
     val ht = if (board.areaH > 0f) w.h.coerceAtMost(board.areaH) else w.h
     val x = w.x.coerceIn(0f, maxOf(0f, board.areaW - wd))
@@ -2582,7 +2714,16 @@ private fun WidgetHost(w: WidgetItem, board: WidgetBoard, editing: Boolean, onSe
                     .pointerInput(w.id) {
                         detectDragGestures(
                             onDragStart = { board.begin(w.id) },
-                            onDragEnd = { board.settle(w.id, false) },
+                            onDragEnd = {
+                                when (board.sendToEdge(w.id)) {
+                                    1 -> Toast.makeText(hostCtx, "Sent to page ${board.page + 1}", Toast.LENGTH_SHORT).show()
+                                    2 -> {
+                                        Toast.makeText(hostCtx, "No room on that page.", Toast.LENGTH_SHORT).show()
+                                        board.settle(w.id, false)
+                                    }
+                                    else -> board.settle(w.id, false)
+                                }
+                            },
                             onDragCancel = { board.settle(w.id, false) },
                         ) { change, drag ->
                             change.consume()
@@ -2651,19 +2792,21 @@ private fun WidgetBody(
             WType.DIGITAL -> DigitalContent(now, is24w)
             WType.BOILER -> GaugeContent(battery, true, ws.title.ifBlank { "Boiler pressure" }, "${(battery * 100).toInt()}% charged")
             WType.CARGO -> GaugeContent(storage.first, false, ws.title.ifBlank { "Cargo hold" }, "${(storage.first * 100).toInt()}% full")
-            WType.VIALS -> VialsContent(ws.vials, ws.fahrenheit)
+            WType.VIALS -> VialsContent(ws.vials, ws.fahrenheit, ws.vialColors)
             WType.MUSIC -> MusicContent()
             WType.ENGINE -> EngineRoomContent(ws.fahrenheit)
             WType.COMPASS -> CompassContent()
             WType.BAROMETER -> BarometerContent(ws.title.ifBlank { "Barometer" })
             WType.MOON -> MoonContent(now)
             WType.SUN -> SunContent(now, is24w, prefs)
+            WType.WEATHER -> WeatherContent(prefs, ws.fahrenheit, ws.title.ifBlank { "Weather" })
             WType.SOLAR -> SolarContent(now)
             WType.CHRONO -> ChronoContent(w.id, prefs)
             WType.TIMER -> TimerContent(w.id, prefs, is24w)
             WType.ALMANAC -> AlmanacContent(now)
             WType.AGENDA -> AgendaContent(is24w, ws.title.ifBlank { "Agenda" })
             WType.LANTERN -> LanternContent()
+            WType.APPWIDGET -> AppWidgetContent(w.id, prefs)
             WType.MEMO -> MemoContent(w.id, prefs, editing, ws.title.ifBlank { "Memorandum" })
             WType.SHELF -> AppRowContent(
                 ws.title.ifBlank { "App shelf" },
@@ -3229,7 +3372,7 @@ private fun chronoText(ms: Long): String {
 }
 
 /** Last known rough location (needs the location permission). Remembers it so the widget keeps working. */
-private fun findLocation(ctx: Context, prefs: SharedPreferences, granted: Boolean): Pair<Double, Double>? {
+internal fun findLocation(ctx: Context, prefs: SharedPreferences, granted: Boolean): Pair<Double, Double>? {
     if (granted) {
         try {
             val lm = ctx.getSystemService(Context.LOCATION_SERVICE) as LocationManager

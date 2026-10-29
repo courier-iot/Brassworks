@@ -129,9 +129,8 @@ fun Gear(
 
 /** Leather backdrop with two ghost gears. Used behind every screen. */
 @Composable
-fun SteamBackdrop(modifier: Modifier = Modifier) {
+fun SteamBackdrop(modifier: Modifier = Modifier, wall: ImageBitmap? = Steam.wallpaper) {
     Box(modifier.fillMaxSize().background(Brush.verticalGradient(listOf(Steam.Leather, Steam.Soot)))) {
-        val wall = Steam.wallpaper
         if (wall != null) {
             Image(wall, contentDescription = null, modifier = Modifier.fillMaxSize(), contentScale = ContentScale.Crop)
             Box(Modifier.fillMaxSize().background(Color.Black.copy(alpha = Steam.wallDim)))

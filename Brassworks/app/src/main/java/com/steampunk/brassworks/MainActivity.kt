@@ -16,6 +16,7 @@ class MainActivity : ComponentActivity() {
 
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
+        SafeMode.begin(this) // counts this start, and steps in if the last few all failed
         Steam.load(this) // saved theme and gear speed, before anything is drawn
         setContent { SteampunkTheme { LauncherRoot(tick, homeSignal, active) } }
     }
@@ -29,6 +30,12 @@ class MainActivity : ComponentActivity() {
     override fun onPause() {
         active = false
         super.onPause()
+    }
+
+    @Deprecated("Only used for the app-widget permission and set-up screens")
+    override fun onActivityResult(requestCode: Int, resultCode: Int, data: Intent?) {
+        super.onActivityResult(requestCode, resultCode, data)
+        AppWidgets.onResult(this, requestCode, resultCode)
     }
 
     override fun onNewIntent(intent: Intent) {
