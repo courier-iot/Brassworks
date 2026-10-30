@@ -22,6 +22,10 @@ private val CREDITS = listOf(
             "Links and web searches open in your browser, and your layouts, notes and settings stay on this phone.",
     ),
     InfoSection(
+        "Made by",
+        "Created by Courier, of Stellarite.",
+    ),
+    InfoSection(
         "Weather",
         "Weather data by Open-Meteo.com, used under the Creative Commons Attribution 4.0 licence (CC BY 4.0). " +
             "The Weather widget sends only your location, rounded to about a kilometre, to open-meteo.com, and keeps the last answer on the phone.",
