@@ -61,24 +61,33 @@ object TimerEngine {
 
     const val KIND_TIMER = 0
     const val KIND_ALARM = 1
+    const val TIMER_SLOTS = 3
+    private const val SNOOZE_MIN = 5
 
-    private fun ringIntent(ctx: Context, id: Long, kind: Int, label: String): PendingIntent {
+    /** Minutes a snooze lasts. */
+    const val SNOOZE_MINUTES = SNOOZE_MIN
+
+    /** Each widget can run up to three countdowns. The first uses the original kind, the others use 2 and 3 (1 is the alarm). */
+    fun timerKind(slot: Int) = if (slot == 0) KIND_TIMER else slot + 1
+
+    private fun ringIntent(ctx: Context, id: Long, kind: Int, label: String, tone: String = ""): PendingIntent {
         val i = Intent(ctx, TimerReceiver::class.java)
             .setAction(ACTION)
             .setData(Uri.parse("brassworks://timer/$id/$kind"))
             .putExtra("label", label)
+            .putExtra("tone", tone)
         return PendingIntent.getBroadcast(ctx, 0, i, PendingIntent.FLAG_IMMUTABLE or PendingIntent.FLAG_UPDATE_CURRENT)
     }
 
     /** Asks Android to ring at this moment. Scheduling the same widget and kind again replaces the old one. */
-    fun schedule(ctx: Context, id: Long, kind: Int, atMs: Long, label: String) {
+    fun schedule(ctx: Context, id: Long, kind: Int, atMs: Long, label: String, tone: String = "") {
         try {
             val am = ctx.getSystemService(Context.ALARM_SERVICE) as AlarmManager
             val show = PendingIntent.getActivity(
                 ctx, 0, Intent(ctx, MainActivity::class.java).addFlags(Intent.FLAG_ACTIVITY_NEW_TASK),
                 PendingIntent.FLAG_IMMUTABLE or PendingIntent.FLAG_UPDATE_CURRENT,
             )
-            am.setAlarmClock(AlarmManager.AlarmClockInfo(atMs, show), ringIntent(ctx, id, kind, label))
+            am.setAlarmClock(AlarmManager.AlarmClockInfo(atMs, show), ringIntent(ctx, id, kind, label, tone))
         } catch (e: Exception) {
             // no alarm service: the widget still counts, it just cannot ring in the background
         }
@@ -96,16 +105,17 @@ object TimerEngine {
     fun cancelAll(ctx: Context) {
         val p = ctx.getSharedPreferences("brassworks", Context.MODE_PRIVATE)
         p.all.keys.forEach { k ->
-            Regex("(tm_end|al_at)_(\\d+)").matchEntire(k)?.let { m ->
-                val id = m.groupValues[2].toLongOrNull() ?: return@let
-                cancel(ctx, id, if (m.groupValues[1] == "tm_end") KIND_TIMER else KIND_ALARM)
+            Regex("(tm_end|al_at)(\\d?)_(\\d+)").matchEntire(k)?.let { m ->
+                val id = m.groupValues[3].toLongOrNull() ?: return@let
+                val slot = m.groupValues[2].toIntOrNull() ?: 0
+                cancel(ctx, id, if (m.groupValues[1] == "tm_end") timerKind(slot) else KIND_ALARM)
             }
         }
         silence(ctx)
     }
 
     fun forget(ctx: Context, id: Long) {
-        cancel(ctx, id, KIND_TIMER)
+        for (slot in 0 until TIMER_SLOTS) cancel(ctx, id, timerKind(slot))
         cancel(ctx, id, KIND_ALARM)
     }
 
@@ -120,7 +130,7 @@ object TimerEngine {
     private fun notifier(ctx: Context) = ctx.getSystemService(Context.NOTIFICATION_SERVICE) as NotificationManager
 
     /** Called when an alarm goes off, even if Brassworks was closed. */
-    fun ring(ctx: Context, label: String) {
+    fun ring(ctx: Context, label: String, tone: String = "") {
         val nm = notifier(ctx)
         val canNotify = try {
             nm.areNotificationsEnabled()
@@ -128,13 +138,14 @@ object TimerEngine {
             false
         }
         if (!canNotify) {
-            Ringer.start(ctx)
+            Ringer.start(ctx, tone = tone)
             return
         }
         try {
-            val sound = RingtoneManager.getDefaultUri(RingtoneManager.TYPE_ALARM)
-                ?: RingtoneManager.getDefaultUri(RingtoneManager.TYPE_NOTIFICATION)
-            val chan = NotificationChannel(CHANNEL, "Timer and alarm", NotificationManager.IMPORTANCE_HIGH).apply {
+            val sound = Ringer.soundFor(tone)
+            // a notification channel's sound cannot change once made, so each chosen ringtone gets a channel of its own
+            val channelId = if (tone.isBlank()) CHANNEL else CHANNEL + "_" + Integer.toHexString(tone.hashCode())
+            val chan = NotificationChannel(channelId, "Timer and alarm", NotificationManager.IMPORTANCE_HIGH).apply {
                 description = "Rings when a Brassworks countdown or alarm finishes"
                 setSound(
                     sound,
@@ -147,7 +158,7 @@ object TimerEngine {
                 ctx, 0, Intent(ctx, MainActivity::class.java).addFlags(Intent.FLAG_ACTIVITY_NEW_TASK or Intent.FLAG_ACTIVITY_SINGLE_TOP),
                 PendingIntent.FLAG_IMMUTABLE or PendingIntent.FLAG_UPDATE_CURRENT,
             )
-            val n = Notification.Builder(ctx, CHANNEL)
+            val n = Notification.Builder(ctx, channelId)
                 .setSmallIcon(android.R.drawable.ic_lock_idle_alarm)
                 .setContentTitle(label)
                 .setContentText("Tap to silence")
@@ -159,7 +170,7 @@ object TimerEngine {
             n.flags = n.flags or Notification.FLAG_INSISTENT // keep the sound going until it is dealt with
             nm.notify(NOTE_ID, n)
         } catch (e: Exception) {
-            Ringer.start(ctx)
+            Ringer.start(ctx, tone = tone)
         }
     }
 
@@ -190,11 +201,16 @@ object Ringer {
     private val handler = Handler(Looper.getMainLooper())
     private val stopper = Runnable { stop() }
 
-    fun start(ctx: Context, forMs: Long = 60_000L) {
+    /** The sound to use: the one chosen for the widget, or the phone's alarm sound. */
+    fun soundFor(tone: String): Uri? =
+        (if (tone.isNotBlank()) try { Uri.parse(tone) } catch (e: Exception) { null } else null)
+            ?: RingtoneManager.getDefaultUri(RingtoneManager.TYPE_ALARM)
+            ?: RingtoneManager.getDefaultUri(RingtoneManager.TYPE_NOTIFICATION)
+
+    fun start(ctx: Context, forMs: Long = 60_000L, tone: String = "") {
         stop()
         try {
-            val uri = RingtoneManager.getDefaultUri(RingtoneManager.TYPE_ALARM)
-                ?: RingtoneManager.getDefaultUri(RingtoneManager.TYPE_NOTIFICATION)
+            val uri = soundFor(tone)
             val r = RingtoneManager.getRingtone(ctx.applicationContext, uri) ?: return
             if (Build.VERSION.SDK_INT >= 28) {
                 r.isLooping = true
@@ -226,7 +242,7 @@ object Ringer {
 
 class TimerReceiver : BroadcastReceiver() {
     override fun onReceive(context: Context, intent: Intent) {
-        TimerEngine.ring(context.applicationContext, intent.getStringExtra("label") ?: "Time is up")
+        TimerEngine.ring(context.applicationContext, intent.getStringExtra("label") ?: "Time is up", intent.getStringExtra("tone") ?: "")
     }
 }
 
@@ -251,24 +267,31 @@ private fun inText(ms: Long): String {
     return if (mins >= 60) "${mins / 60}h ${mins % 60}m" else "${mins}m"
 }
 
+/** Preference key for one countdown slot. Slot 0 keeps the original names so older timers carry on. */
+private fun slotKey(base: String, slot: Int, id: Long) = if (slot == 0) "${base}_$id" else "$base${slot}_$id"
+
 @Composable
-fun TimerContent(id: Long, prefs: SharedPreferences, is24: Boolean) = BoxWithConstraints(Modifier.fillMaxSize()) {
+fun TimerContent(id: Long, prefs: SharedPreferences, is24: Boolean, tone: String = "") = BoxWithConstraints(Modifier.fillMaxSize()) {
     val ctx = LocalContext.current
     val active = LocalActive.current
     val mw = maxWidth
     val mh = maxHeight
 
     var mode by remember(id) { mutableIntStateOf(prefs.getInt("tm_mode_$id", 0)) }       // 0 countdown, 1 alarm
-    var setMin by remember(id) { mutableIntStateOf(prefs.getInt("tm_set_$id", 5)) }      // countdown length, minutes
-    var end by remember(id) { mutableLongStateOf(prefs.getLong("tm_end_$id", 0L)) }      // when it rings, 0 = not running
-    var left by remember(id) { mutableLongStateOf(prefs.getLong("tm_left_$id", 0L)) }    // time left while paused
+    var slot by remember(id) { mutableIntStateOf(prefs.getInt("tm_slot_$id", 0).coerceIn(0, TimerEngine.TIMER_SLOTS - 1)) }
+    var setMin by remember(id, slot) { mutableIntStateOf(prefs.getInt(slotKey("tm_set", slot, id), 5)) }      // countdown length, minutes
+    var end by remember(id, slot) { mutableLongStateOf(prefs.getLong(slotKey("tm_end", slot, id), 0L)) }      // when it rings, 0 = not running
+    var left by remember(id, slot) { mutableLongStateOf(prefs.getLong(slotKey("tm_left", slot, id), 0L)) }    // time left while paused
     var alMin by remember(id) { mutableIntStateOf(prefs.getInt("al_min_$id", 7 * 60)) }  // alarm time, minutes after midnight
     var alAt by remember(id) { mutableLongStateOf(prefs.getLong("al_at_$id", 0L)) }      // when the alarm rings, 0 = off
     var nowMs by remember { mutableLongStateOf(System.currentTimeMillis()) }
     var ringing by remember { mutableStateOf(false) }
+    val timerKind = TimerEngine.timerKind(slot)
+    val timerLabel = if (slot == 0) "Countdown finished" else "Countdown ${slot + 1} finished"
 
     fun save() {
-        prefs.edit().putInt("tm_mode_$id", mode).putInt("tm_set_$id", setMin).putLong("tm_end_$id", end).putLong("tm_left_$id", left)
+        prefs.edit().putInt("tm_mode_$id", mode).putInt("tm_slot_$id", slot)
+            .putInt(slotKey("tm_set", slot, id), setMin).putLong(slotKey("tm_end", slot, id), end).putLong(slotKey("tm_left", slot, id), left)
             .putInt("al_min_$id", alMin).putLong("al_at_$id", alAt).apply()
     }
 
@@ -284,13 +307,21 @@ fun TimerContent(id: Long, prefs: SharedPreferences, is24: Boolean) = BoxWithCon
     }
 
     // After a restart Android forgets scheduled alarms, so put back any that are still to come.
-    LaunchedEffect(id) {
+    LaunchedEffect(id, tone) {
         val t = System.currentTimeMillis()
-        if (end > t) TimerEngine.schedule(ctx, id, TimerEngine.KIND_TIMER, end, "Countdown finished")
-        if (alAt > t) TimerEngine.schedule(ctx, id, TimerEngine.KIND_ALARM, alAt, "Alarm")
+        for (s in 0 until TimerEngine.TIMER_SLOTS) {
+            val e = prefs.getLong(slotKey("tm_end", s, id), 0L)
+            if (e > t) TimerEngine.schedule(ctx, id, TimerEngine.timerKind(s), e, if (s == 0) "Countdown finished" else "Countdown ${s + 1} finished", tone)
+        }
+        if (alAt > t) TimerEngine.schedule(ctx, id, TimerEngine.KIND_ALARM, alAt, "Alarm", tone)
     }
 
-    val pending = end != 0L || alAt != 0L
+    // the other countdowns, so their numbers can show that they are running
+    fun slotRunning(s: Int): Boolean =
+        if (s == slot) end > nowMs || left > 0L else prefs.getLong(slotKey("tm_end", s, id), 0L) > nowMs || prefs.getLong(slotKey("tm_left", s, id), 0L) > 0L
+    val pending = alAt != 0L || (0 until TimerEngine.TIMER_SLOTS).any { s ->
+        if (s == slot) end != 0L else prefs.getLong(slotKey("tm_end", s, id), 0L) != 0L
+    }
     LaunchedEffect(pending, active) {
         while (active) {
             nowMs = System.currentTimeMillis()
@@ -306,6 +337,23 @@ fun TimerContent(id: Long, prefs: SharedPreferences, is24: Boolean) = BoxWithCon
     val armed = alAt > nowMs
     val alarmRang = alAt != 0L && alAt <= nowMs
 
+    fun snoozeTimer() {
+        TimerEngine.silence(ctx)
+        ringing = false
+        end = System.currentTimeMillis() + TimerEngine.SNOOZE_MINUTES * 60_000L
+        left = 0L
+        TimerEngine.schedule(ctx, id, timerKind, end, timerLabel, tone)
+        save()
+    }
+
+    fun snoozeAlarm() {
+        TimerEngine.silence(ctx)
+        ringing = false
+        alAt = System.currentTimeMillis() + TimerEngine.SNOOZE_MINUTES * 60_000L
+        TimerEngine.schedule(ctx, id, TimerEngine.KIND_ALARM, alAt, "Alarm", tone)
+        save()
+    }
+
     val fs = minOf(mw.value * 0.14f, mh.value * 0.30f).coerceIn(18f, 40f)
     Column(Modifier.fillMaxSize(), horizontalAlignment = Alignment.CenterHorizontally, verticalArrangement = Arrangement.Center) {
         Row(Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically) {
@@ -314,6 +362,25 @@ fun TimerContent(id: Long, prefs: SharedPreferences, is24: Boolean) = BoxWithCon
                 modifier = Modifier.clickable { mode = 1 - mode; save() },
                 fontSize = 12.sp, fontFamily = Steam.font, fontWeight = FontWeight.Bold, color = Steam.BrassLight, maxLines = 1,
             )
+            if (mode == 0) {
+                // three countdown slots: the one you are looking at is bright, and a running one is marked
+                for (s in 0 until TimerEngine.TIMER_SLOTS) {
+                    val here = s == slot
+                    val busy = slotRunning(s)
+                    Text(
+                        (s + 1).toString() + if (busy) "•" else "",
+                        modifier = Modifier.clickable {
+                            if (!here) {
+                                save()
+                                slot = s
+                                prefs.edit().putInt("tm_slot_$id", s).apply()
+                            }
+                        }.padding(start = 8.dp),
+                        fontSize = 12.sp, fontFamily = Steam.font, fontWeight = if (here) FontWeight.Bold else FontWeight.Normal,
+                        color = if (here) Steam.BrassLight else if (busy) Steam.Copper else Steam.Steam, maxLines = 1,
+                    )
+                }
+            }
             Spacer(Modifier.weight(1f))
             val status = when {
                 mode == 0 && running -> "rings at " + clockAt(end, is24)
@@ -346,12 +413,12 @@ fun TimerContent(id: Long, prefs: SharedPreferences, is24: Boolean) = BoxWithCon
                         CogButton("Pause", diameter = 50.dp) {
                             left = end - System.currentTimeMillis()
                             end = 0L
-                            TimerEngine.cancel(ctx, id, TimerEngine.KIND_TIMER)
+                            TimerEngine.cancel(ctx, id, timerKind)
                             save()
                         }
                         CogButton("Reset", diameter = 50.dp) {
                             end = 0L; left = 0L
-                            TimerEngine.cancel(ctx, id, TimerEngine.KIND_TIMER)
+                            TimerEngine.cancel(ctx, id, timerKind)
                             save()
                         }
                     }
@@ -359,13 +426,14 @@ fun TimerContent(id: Long, prefs: SharedPreferences, is24: Boolean) = BoxWithCon
                         CogButton("Resume", diameter = 50.dp) {
                             end = System.currentTimeMillis() + left
                             left = 0L
-                            TimerEngine.schedule(ctx, id, TimerEngine.KIND_TIMER, end, "Countdown finished")
+                            TimerEngine.schedule(ctx, id, timerKind, end, timerLabel, tone)
                             save()
                         }
                         CogButton("Reset", diameter = 50.dp) { left = 0L; save() }
                     }
                     timerDone -> {
                         if (ringing) CogButton("Quiet", diameter = 50.dp) { TimerEngine.silence(ctx); ringing = false }
+                        CogButton("Snooze", diameter = 50.dp) { snoozeTimer() }
                         CogButton("Reset", diameter = 50.dp) {
                             end = 0L
                             TimerEngine.silence(ctx)
@@ -380,7 +448,7 @@ fun TimerContent(id: Long, prefs: SharedPreferences, is24: Boolean) = BoxWithCon
                             ensureNotifyPermission()
                             end = System.currentTimeMillis() + setMin * 60_000L
                             left = 0L
-                            TimerEngine.schedule(ctx, id, TimerEngine.KIND_TIMER, end, "Countdown finished")
+                            TimerEngine.schedule(ctx, id, timerKind, end, timerLabel, tone)
                             save()
                         }
                     }
@@ -394,6 +462,7 @@ fun TimerContent(id: Long, prefs: SharedPreferences, is24: Boolean) = BoxWithCon
                     }
                     alarmRang -> {
                         if (ringing) CogButton("Quiet", diameter = 50.dp) { TimerEngine.silence(ctx); ringing = false }
+                        CogButton("Snooze", diameter = 50.dp) { snoozeAlarm() }
                         CogButton("Clear", diameter = 50.dp) {
                             alAt = 0L
                             TimerEngine.silence(ctx)
@@ -407,7 +476,7 @@ fun TimerContent(id: Long, prefs: SharedPreferences, is24: Boolean) = BoxWithCon
                         CogButton("Set", diameter = 50.dp) {
                             ensureNotifyPermission()
                             alAt = TimerEngine.nextOccurrence(alMin)
-                            TimerEngine.schedule(ctx, id, TimerEngine.KIND_ALARM, alAt, "Alarm")
+                            TimerEngine.schedule(ctx, id, TimerEngine.KIND_ALARM, alAt, "Alarm", tone)
                             save()
                         }
                     }

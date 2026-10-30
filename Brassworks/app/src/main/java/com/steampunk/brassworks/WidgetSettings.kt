@@ -1,6 +1,13 @@
 package com.steampunk.brassworks
 
+import android.app.Activity
+import android.content.Intent
+import android.media.RingtoneManager
+import android.net.Uri
+import android.os.Build
 import android.widget.Toast
+import androidx.activity.compose.rememberLauncherForActivityResult
+import androidx.activity.result.contract.ActivityResultContracts
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
 import androidx.compose.foundation.clickable
@@ -36,6 +43,9 @@ data class WidgetSettings(
     val opacity: Float = 1f,        // 0.2 to 1: how solid the panel behind the widget is
     val vials: List<String> = DEFAULT_VIALS, // Vials widget: which readings, in order
     val vialColors: Map<String, Int> = emptyMap(), // Vials widget: own liquid colour per reading (ARGB). Missing = automatic
+    val tone: String = "",          // Countdown: ringtone (a content address), blank = the phone's alarm sound
+    val lanternMin: Int = 0,        // Lantern: switch off by itself after this many minutes, 0 = never
+    val lanternLevel: Int = 100,    // Lantern: brightness in percent, on phones that can dim the torch
     val player: String = "",        // Music player: package of the app to follow, blank = whichever is playing
 )
 
@@ -43,7 +53,7 @@ internal fun encodeSettings(s: WidgetSettings): String {
     val vc = JSONObject()
     s.vialColors.forEach { (k, v) -> vc.put(k, v) }
     return JSONObject().put("c", s.clock).put("f", s.fahrenheit).put("t", s.title).put("o", s.opacity.toDouble())
-        .put("v", s.vials.joinToString(",")).put("vc", vc).put("p", s.player).toString()
+        .put("v", s.vials.joinToString(",")).put("vc", vc).put("p", s.player).put("tn", s.tone).put("lm", s.lanternMin).put("ll", s.lanternLevel).toString()
 }
 
 internal fun decodeSettings(raw: String?): WidgetSettings {
@@ -62,6 +72,9 @@ internal fun decodeSettings(raw: String?): WidgetSettings {
                 vc.keys().asSequence().filter { k -> VIAL_METRICS.any { it.key == k } }.associateWith { vc.optInt(it, 0) }
             }.orEmpty(),
             player = o.optString("p", "").take(150),
+            tone = o.optString("tn", "").take(400),
+            lanternMin = o.optInt("lm", 0).let { if (it in listOf(2, 5, 10, 30)) it else 0 },
+            lanternLevel = o.optInt("ll", 100).coerceIn(10, 100),
         )
     } catch (e: Exception) {
         WidgetSettings()
@@ -151,6 +164,82 @@ fun WidgetSettingsDialog(w: WidgetItem, board: WidgetBoard, onClose: () -> Unit)
                             }
                             if (rowOf.size == 1) Spacer(Modifier.weight(1f))
                         }
+                    }
+                }
+
+                if (w.type == WType.TIMER) {
+                    Text("Ringtone", style = MaterialTheme.typography.titleMedium, color = Steam.Parchment)
+                    val pickTone = rememberLauncherForActivityResult(ActivityResultContracts.StartActivityForResult()) { res ->
+                        if (res.resultCode == Activity.RESULT_OK) {
+                            val picked: Uri? = if (Build.VERSION.SDK_INT >= 33) {
+                                res.data?.getParcelableExtra(RingtoneManager.EXTRA_RINGTONE_PICKED_URI, Uri::class.java)
+                            } else {
+                                @Suppress("DEPRECATION")
+                                res.data?.getParcelableExtra(RingtoneManager.EXTRA_RINGTONE_PICKED_URI)
+                            }
+                            change { it.copy(tone = picked?.toString() ?: "") }
+                        }
+                    }
+                    val toneName = remember(cur.tone) {
+                        if (cur.tone.isBlank()) "The phone's alarm sound" else try {
+                            RingtoneManager.getRingtone(ctx, Uri.parse(cur.tone))?.getTitle(ctx) ?: "Your choice"
+                        } catch (e: Exception) {
+                            "Your choice"
+                        }
+                    }
+                    Text(
+                        "$toneName. Used by every countdown and the alarm in this widget. " +
+                            "A countdown has three slots: tap 1, 2 or 3 beside its title to switch. A number with a dot is running.",
+                        style = MaterialTheme.typography.labelLarge, color = Steam.Steam,
+                    )
+                    CogRow {
+                        CogButton("Choose") {
+                            val ask = Intent(RingtoneManager.ACTION_RINGTONE_PICKER)
+                                .putExtra(RingtoneManager.EXTRA_RINGTONE_TYPE, RingtoneManager.TYPE_ALARM)
+                                .putExtra(RingtoneManager.EXTRA_RINGTONE_SHOW_DEFAULT, true)
+                                .putExtra(RingtoneManager.EXTRA_RINGTONE_SHOW_SILENT, false)
+                                .putExtra(RingtoneManager.EXTRA_RINGTONE_TITLE, "Countdown ringtone")
+                            if (cur.tone.isNotBlank()) ask.putExtra(RingtoneManager.EXTRA_RINGTONE_EXISTING_URI, Uri.parse(cur.tone))
+                            try {
+                                pickTone.launch(ask)
+                            } catch (e: Exception) {
+                                Toast.makeText(ctx, "No ringtone chooser on this phone.", Toast.LENGTH_SHORT).show()
+                            }
+                        }
+                        if (cur.tone.isNotBlank()) CogButton("Default") { change { it.copy(tone = "") } }
+                    }
+                }
+
+                if (w.type == WType.LANTERN) {
+                    Text("Switch off by itself", style = MaterialTheme.typography.titleMedium, color = Steam.Parchment)
+                    Text(
+                        "Puts the torch out after this long, so it cannot drain the battery in a pocket.",
+                        style = MaterialTheme.typography.labelLarge, color = Steam.Steam,
+                    )
+                    Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                        listOf(0 to "Never", 2 to "2 min", 5 to "5 min").forEach { (m, label) ->
+                            SpeedChip(label, cur.lanternMin == m, Modifier.weight(1f)) { change { it.copy(lanternMin = m) } }
+                        }
+                    }
+                    Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                        listOf(10 to "10 min", 30 to "30 min").forEach { (m, label) ->
+                            SpeedChip(label, cur.lanternMin == m, Modifier.weight(1f)) { change { it.copy(lanternMin = m) } }
+                        }
+                        Spacer(Modifier.weight(1f))
+                    }
+                    Text("Brightness", style = MaterialTheme.typography.titleMedium, color = Steam.Parchment)
+                    if (remember { lanternMaxLevel(ctx) } > 1) {
+                        Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                            listOf(25 to "Low", 60 to "Medium", 100 to "Full").forEach { (p, label) ->
+                                SpeedChip(label, cur.lanternLevel == p, Modifier.weight(1f)) { change { it.copy(lanternLevel = p) } }
+                            }
+                        }
+                        Text("Takes effect the next time you light it.", style = MaterialTheme.typography.labelLarge, color = Steam.Steam)
+                    } else {
+                        Text(
+                            "This phone cannot dim its torch, or has an Android older than 13, so it always lights at full brightness.",
+                            style = MaterialTheme.typography.labelLarge, color = Steam.Steam,
+                        )
                     }
                 }
 

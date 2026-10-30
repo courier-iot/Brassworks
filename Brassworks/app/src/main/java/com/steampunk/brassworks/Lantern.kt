@@ -3,6 +3,7 @@ package com.steampunk.brassworks
 import android.content.Context
 import android.hardware.camera2.CameraCharacteristics
 import android.hardware.camera2.CameraManager
+import android.os.Build
 import android.os.Handler
 import android.os.Looper
 import android.widget.Toast
@@ -12,6 +13,7 @@ import androidx.compose.foundation.layout.*
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.DisposableEffect
+import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
@@ -43,12 +45,48 @@ private fun torchCamera(cm: CameraManager): String? = try {
     null
 }
 
+/** How bright the torch can go: 1 on a phone that cannot dim it, otherwise the number of steps it offers (Android 13 and later). */
+internal fun lanternMaxLevel(ctx: Context): Int {
+    if (Build.VERSION.SDK_INT < 33) return 1
+    return try {
+        val cm = ctx.getSystemService(Context.CAMERA_SERVICE) as CameraManager
+        val id = torchCamera(cm) ?: return 1
+        cm.getCameraCharacteristics(id).get(CameraCharacteristics.FLASH_INFO_STRENGTH_MAXIMUM_LEVEL) ?: 1
+    } catch (e: Exception) {
+        1
+    }
+}
+
+/** Puts the torch out by itself after a while. It lives outside the screen, so closing the launcher does not forget it. */
+private object LanternTimer {
+    private val handler = Handler(Looper.getMainLooper())
+    private var pending: Runnable? = null
+
+    fun arm(cm: CameraManager, camId: String, minutes: Int) {
+        disarm()
+        val r = Runnable {
+            try {
+                cm.setTorchMode(camId, false)
+            } catch (e: Exception) {
+                // already off, or the camera is in use
+            }
+        }
+        pending = r
+        handler.postDelayed(r, minutes * 60_000L)
+    }
+
+    fun disarm() {
+        pending?.let { handler.removeCallbacks(it) }
+        pending = null
+    }
+}
+
 /**
  * The Lantern widget: tap to switch the phone's torch on or off. It needs no permission. It follows the torch, so
  * if you switch it on from the quick settings panel the lantern lights up here too.
  */
 @Composable
-fun LanternContent() = BoxWithConstraints(Modifier.fillMaxSize()) {
+fun LanternContent(autoOffMin: Int = 0, levelPct: Int = 100) = BoxWithConstraints(Modifier.fillMaxSize()) {
     val ctx = LocalContext.current
     val mw = maxWidth
     val mh = maxHeight
@@ -79,12 +117,23 @@ fun LanternContent() = BoxWithConstraints(Modifier.fillMaxSize()) {
         }
     }
 
+    // an automatic switch-off follows the torch, however it was lit
+    LaunchedEffect(on, autoOffMin, camId) {
+        if (on && autoOffMin > 0 && camId != null) LanternTimer.arm(cm, camId, autoOffMin) else LanternTimer.disarm()
+    }
+
+    val maxLevel = remember { lanternMaxLevel(ctx) }
     val toggle = {
         if (camId == null) {
             Toast.makeText(ctx, "This phone has no torch.", Toast.LENGTH_SHORT).show()
         } else {
             try {
-                cm.setTorchMode(camId, !on)
+                if (!on && maxLevel > 1 && levelPct < 100 && Build.VERSION.SDK_INT >= 33) {
+                    val level = (maxLevel * levelPct / 100).coerceIn(1, maxLevel)
+                    cm.turnOnTorchWithStrengthLevel(camId, level)
+                } else {
+                    cm.setTorchMode(camId, !on)
+                }
             } catch (e: Exception) {
                 Toast.makeText(ctx, "The torch is busy. Try again in a moment.", Toast.LENGTH_SHORT).show()
             }
@@ -146,7 +195,7 @@ fun LanternContent() = BoxWithConstraints(Modifier.fillMaxSize()) {
             Text(
                 when {
                     camId == null -> "No torch on this phone"
-                    on -> "Lit. Tap to put it out"
+                    on -> "Lit. Tap to put it out" + (if (autoOffMin > 0) " (goes out after $autoOffMin min)" else "")
                     else -> "Dark. Tap to light it"
                 },
                 fontSize = 12.sp, fontFamily = Steam.font, color = Steam.Steam, maxLines = 2,
