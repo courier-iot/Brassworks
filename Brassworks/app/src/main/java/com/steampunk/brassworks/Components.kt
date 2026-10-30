@@ -195,7 +195,7 @@ private fun DrawScope.bolt(at: Offset) {
  * The Dieselpunk finish for a panel: worn corners, scratches and oil streaks, a neon line set in from the edge,
  * and four bolts. The neon follows the nixie colour in Settings.
  */
-private fun DrawScope.dieselTrim(seed: Int, lit: Color, glow: Color) {
+private fun DrawScope.dieselTrim(seed: Int, lit: Color, glow: Color, pulse: Float = 1f) {
     val w = size.width
     val h = size.height
     val cut = 14.dp.toPx()
@@ -235,8 +235,8 @@ private fun DrawScope.dieselTrim(seed: Int, lit: Color, glow: Color) {
         lineTo(i, i + cut)
         close()
     }
-    drawPath(edge, glow.copy(alpha = 0.22f), style = Stroke(5.dp.toPx(), join = StrokeJoin.Round))
-    drawPath(edge, lit.copy(alpha = 0.9f), style = Stroke(1.5.dp.toPx(), join = StrokeJoin.Round))
+    drawPath(edge, glow.copy(alpha = 0.22f * pulse), style = Stroke(5.dp.toPx(), join = StrokeJoin.Round))
+    drawPath(edge, lit.copy(alpha = 0.9f * pulse), style = Stroke(1.5.dp.toPx(), join = StrokeJoin.Round))
 
     val b = 13.dp.toPx()
     bolt(Offset(b + 3.dp.toPx(), b + 3.dp.toPx())); bolt(Offset(w - b, b))
@@ -294,7 +294,9 @@ fun RivetedPanel(
                 if (corp) {
                     corpTrim(glow)
                 } else if (punk) {
-                    dieselTrim(seed, lit, glow)
+                    // about one panel in four flickers fully, the rest only a little, so it looks like separate tubes
+                    val strength = if (seed % 4 == 0) 1f else 0.35f
+                    dieselTrim(seed, lit, glow, 1f - strength * (1f - StyleMotion.flicker))
                 } else {
                     val i = 10.dp.toPx()
                     rivet(Offset(i, i)); rivet(Offset(size.width - i, i))

@@ -1480,6 +1480,9 @@ fun LauncherRoot(tick: Int, homeSignal: Int, active: Boolean = true) {
     // Coming back to the home screen counts as noticing a ringing timer or alarm, so it goes quiet.
     LaunchedEffect(active) { if (active) TimerEngine.silence(ctx) }
 
+    // Dieselpunk's occasional neon flicker (does nothing in the other styles)
+    NeonFlicker(active, animations, Steam.style)
+
     // Scheduled looks: while the home screen is showing, check every half minute whether a rule fits.
     LaunchedEffect(active) {
         while (active) {
@@ -1595,6 +1598,7 @@ fun LauncherRoot(tick: Int, homeSignal: Int, active: Boolean = true) {
                     onAdd = { picker = true },
                     onDone = { editing = false },
                 )
+                if (Steam.corp) ScanLine(board.page)
                 AnimatedVisibility(
                     visible = drawer,
                     enter = slideInVertically(tween(300)) { it } + fadeIn(tween(300)),

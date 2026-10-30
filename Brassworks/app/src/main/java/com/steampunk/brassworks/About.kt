@@ -132,7 +132,8 @@ private val HELP = listOf(
     InfoSection(
         "Sound and steam",
         "Settings > Look has Sound effects and Steam puffs, both off until you switch them on. The sounds are soft brass clicks and clunks for opening an app, the gear, the Workshop, arranging, putting a widget down and changing page, " +
-            "and they follow your phone's volume, so silent mode mutes them. Steam puffs rise from the gear when you open the Workshop or start arranging.",
+            "and they follow your phone's volume, so silent mode mutes them. Steam puffs rise from the gear when you open the Workshop or start arranging. " +
+            "Each other style has a little motion of its own: Dieselpunk's neon edges flicker now and then, and Corp HUD draws a thin scan line down the screen when you change page. Both stop when Turning gears is off.",
     ),
     InfoSection(
         "Recent apps and Brass icons",
