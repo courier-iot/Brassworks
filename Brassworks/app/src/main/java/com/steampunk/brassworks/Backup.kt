@@ -243,6 +243,7 @@ object Backup {
     fun restoreDefaults(ctx: Context) {
         val ed = prefs(ctx).edit()
         lookKeys.forEach { ed.remove(it) }
+        ed.remove("sched_on").remove("sched_base") // a scheduled look that was on must not bring the old look back afterwards
         ed.commit()
         File(ctx.filesDir, "wallpaper.jpg").delete()
         for (i in 0 until 16) File(ctx.filesDir, "wallpaper_p$i.jpg").delete()
