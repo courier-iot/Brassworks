@@ -101,20 +101,8 @@ internal fun WType.hasTitle() = this == WType.BOILER || this == WType.CARGO || t
     this == WType.MEMO || this == WType.SHELF || this == WType.PICKS || this == WType.AGENDA || this == WType.WEATHER ||
     this == WType.WORLD || this == WType.CONTACTS || this == WType.LOGBOOK
 
-internal fun WType.defaultTitle(): String = when (this) {
-    WType.WORLD -> "World clock"
-    WType.CONTACTS -> "Speed dial"
-    WType.LOGBOOK -> "Logbook"
-    WType.WEATHER -> "Weather"
-    WType.AGENDA -> "Agenda"
-    WType.BOILER -> "Boiler pressure"
-    WType.CARGO -> "Cargo hold"
-    WType.BAROMETER -> "Barometer"
-    WType.MEMO -> "Memorandum"
-    WType.SHELF -> "App shelf"
-    WType.PICKS -> "Chief Engineer's picks"
-    else -> title
-}
+/** The heading a widget shows when you have not typed one: its name in the style you are using. */
+internal fun WType.defaultTitle(): String = label()
 
 /** The cog-wheel pop-up shown in Arrange mode. Every change is saved straight away. */
 @Composable
@@ -130,7 +118,7 @@ fun WidgetSettingsDialog(w: WidgetItem, board: WidgetBoard, onClose: () -> Unit)
                 Modifier.fillMaxWidth().heightIn(max = 560.dp).verticalScroll(rememberScrollState()),
                 verticalArrangement = Arrangement.spacedBy(12.dp),
             ) {
-                Text(w.type.title.uppercase(), style = MaterialTheme.typography.titleLarge, color = Steam.BrassLight)
+                Text(w.type.label().uppercase(), style = MaterialTheme.typography.titleLarge, color = Steam.BrassLight)
                 Text("These settings belong to this widget only.", style = MaterialTheme.typography.labelLarge, color = Steam.Steam)
 
                 if (w.type.hasClockFormat()) {

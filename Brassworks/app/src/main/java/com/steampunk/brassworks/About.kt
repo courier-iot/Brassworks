@@ -158,7 +158,7 @@ private val HELP = listOf(
     ),
     InfoSection(
         "Settings",
-        "Workshop > Settings has the style (Steampunk, Dieselpunk or Corp HUD), the metal, nixie glow, gear speed, font, wallpaper, your own mixed colours, the fixed grid and its size (Auto, 5 × 10 or 4 × 9), hidden apps and your default home app.",
+        "Workshop > Settings has the style (Steampunk, Dieselpunk or Corp HUD, which also gives the widgets names to match, such as Boiler pressure, Generator charge or Power cell), the metal, nixie glow, gear speed, font, wallpaper, your own mixed colours, the fixed grid and its size (Auto, 5 × 10 or 4 × 9), hidden apps and your default home app.",
     ),
     InfoSection(
         "Backup and reset",

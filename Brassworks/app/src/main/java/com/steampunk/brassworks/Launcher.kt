@@ -2620,7 +2620,7 @@ private fun PickerRow(t: WType, onClick: () -> Unit) {
             .clickable(onClick = onClick)
             .padding(12.dp),
     ) {
-        Text(t.title, style = MaterialTheme.typography.titleMedium, color = Steam.BrassLight)
+        Text(t.label(), style = MaterialTheme.typography.titleMedium, color = Steam.BrassLight)
         Text(t.blurb, style = MaterialTheme.typography.bodyMedium, color = Steam.Parchment)
         if (t.tip != null) Text("★ " + t.tip.removePrefix("Recommended: "), style = MaterialTheme.typography.labelLarge, color = Steam.Verdigris, fontSize = 12.sp)
     }
@@ -2882,29 +2882,29 @@ private fun WidgetBody(
             WType.NIXIE -> NixiePlainContent(now, is24w)
             WType.ANALOG -> ClockContent(now, is24w)
             WType.DIGITAL -> DigitalContent(now, is24w)
-            WType.BOILER -> GaugeContent(battery, true, ws.title.ifBlank { "Boiler pressure" }, "${(battery * 100).toInt()}% charged")
-            WType.CARGO -> GaugeContent(storage.first, false, ws.title.ifBlank { "Cargo hold" }, "${(storage.first * 100).toInt()}% full")
+            WType.BOILER -> GaugeContent(battery, true, ws.title.ifBlank { w.type.label() }, "${(battery * 100).toInt()}% charged")
+            WType.CARGO -> GaugeContent(storage.first, false, ws.title.ifBlank { w.type.label() }, "${(storage.first * 100).toInt()}% full")
             WType.VIALS -> VialsContent(ws.vials, ws.fahrenheit, ws.vialColors)
             WType.MUSIC -> MusicContent(ws.player)
             WType.ENGINE -> EngineRoomContent(ws.fahrenheit)
             WType.COMPASS -> CompassContent()
-            WType.BAROMETER -> BarometerContent(ws.title.ifBlank { "Barometer" })
+            WType.BAROMETER -> BarometerContent(ws.title.ifBlank { w.type.label() })
             WType.MOON -> MoonContent(now)
             WType.SUN -> SunContent(now, is24w, prefs)
-            WType.WEATHER -> WeatherContent(prefs, ws.fahrenheit, ws.title.ifBlank { "Weather" })
+            WType.WEATHER -> WeatherContent(prefs, ws.fahrenheit, ws.title.ifBlank { w.type.label() })
             WType.SOLAR -> SolarContent(now)
             WType.CHRONO -> ChronoContent(w.id, prefs)
             WType.TIMER -> TimerContent(w.id, prefs, is24w, ws.tone)
             WType.ALMANAC -> AlmanacContent(now)
-            WType.AGENDA -> AgendaContent(is24w, ws.title.ifBlank { "Agenda" })
+            WType.AGENDA -> AgendaContent(is24w, ws.title.ifBlank { w.type.label() })
             WType.LANTERN -> LanternContent(ws.lanternMin, ws.lanternLevel)
-            WType.WORLD -> WorldClockContent(now, is24w, ws.zones, ws.title.ifBlank { "World clock" })
-            WType.CONTACTS -> SpeedDialContent(ws.dial, ws.title.ifBlank { "Speed dial" })
-            WType.LOGBOOK -> LogbookContent(ws.title.ifBlank { "Logbook" })
+            WType.WORLD -> WorldClockContent(now, is24w, ws.zones, ws.title.ifBlank { w.type.label() })
+            WType.CONTACTS -> SpeedDialContent(ws.dial, ws.title.ifBlank { w.type.label() })
+            WType.LOGBOOK -> LogbookContent(ws.title.ifBlank { w.type.label() })
             WType.APPWIDGET -> AppWidgetContent(w.id, prefs)
-            WType.MEMO -> MemoContent(w.id, prefs, editing, ws.title.ifBlank { "Memorandum" })
+            WType.MEMO -> MemoContent(w.id, prefs, editing, ws.title.ifBlank { w.type.label() })
             WType.SHELF -> AppRowContent(
-                ws.title.ifBlank { "App shelf" },
+                ws.title.ifBlank { w.type.label() },
                 pinned.mapNotNull { p -> apps.firstOrNull { it.packageName == p } },
                 "Long-press an app in the archive to add it here.",
                 onLaunch, onLongPress,
@@ -2918,7 +2918,7 @@ private fun WidgetBody(
                 board.linkItems[w.id].orEmpty(),
             ) { onOpenLinks(w.id) }
             WType.PICKS -> AppRowContent(
-                ws.title.ifBlank { "Chief Engineer's picks" },
+                ws.title.ifBlank { w.type.label() },
                 apps.filter { it.packageName !in hidden && (counts[it.packageName] ?: 0) > 0 }.sortedByDescending { counts[it.packageName] ?: 0 }.take(8),
                 "Open a few apps and I will learn which you favour.",
                 onLaunch, onLongPress, iconSize = 60.dp,
