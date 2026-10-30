@@ -130,11 +130,14 @@ object Steam {
     /** The glow colour of every nixie tube. */
     var nixie by mutableStateOf(NixieColors[0])
 
-    /** "steam" (brass, wood and rivets) or "diesel" (gunmetal, cut corners, neon edges and grime). */
+    /** "steam" (brass, wood and rivets), "diesel" (gunmetal, cut corners, neon edges and grime) or "corp" (the Corp HUD: black glass, cut corners and one signal colour). */
     var style by mutableStateOf("steam")
 
-    /** True in the Dieselpunk style. */
-    val punk: Boolean get() = style == "diesel"
+    /** True in the Dieselpunk and Corp HUD styles, which both use steel, cut corners and a glowing accent. */
+    val punk: Boolean get() = style != "steam"
+
+    /** True only in the Corp HUD style. */
+    val corp: Boolean get() = style == "corp"
 
     // ----- your own colours -----
 
@@ -178,7 +181,7 @@ object Steam {
     fun applyColors(ctx: Context, c: LookColors) {
         if (c.metal == "Custom") { customMetal = Color(c.customMetal); customWood = Color(c.customWood) }
         if (c.nixie == "Custom") customNeon = Color(c.customNeon)
-        style = if (c.style == "diesel") "diesel" else "steam"
+        style = cleanStyle(c.style)
         palette = if (c.metal == "Custom") customPalette(customMetal, customWood) else Palettes.firstOrNull { it.name == c.metal } ?: palette
         nixie = if (c.nixie == "Custom") customNixie(customNeon) else NixieColors.firstOrNull { it.name == c.nixie } ?: nixie
         saveCustom(ctx)
@@ -226,12 +229,13 @@ object Steam {
 
     // In Dieselpunk the wood becomes gunmetal and the brass becomes steel. Your Metal choice still tints
     // the steel a little, so Cobalt gives blue steel and Copper gives warm steel.
-    val Soot: Color get() = if (punk) lerp(palette.soot, Color(0xFF080A0D), 0.75f) else palette.soot
-    val Leather: Color get() = if (punk) lerp(palette.leather, Color(0xFF14181D), 0.8f) else palette.leather
-    val Walnut: Color get() = if (punk) lerp(palette.walnut, Color(0xFF232930), 0.8f) else palette.walnut
-    val Brass: Color get() = if (punk) lerp(palette.brass, Color(0xFF8A95A0), 0.7f) else palette.brass
-    val BrassLight: Color get() = if (punk) lerp(palette.brassLight, Color(0xFFD3DBE2), 0.7f) else palette.brassLight
-    val BrassDark: Color get() = if (punk) lerp(palette.brassDark, Color(0xFF39414A), 0.7f) else palette.brassDark
+    // The Corp HUD goes further: near-black glass and cold grey metal, with only a hint of your Metal choice.
+    val Soot: Color get() = when { corp -> lerp(palette.soot, Color(0xFF07080A), 0.92f); punk -> lerp(palette.soot, Color(0xFF080A0D), 0.75f); else -> palette.soot }
+    val Leather: Color get() = when { corp -> lerp(palette.leather, Color(0xFF0E1013), 0.92f); punk -> lerp(palette.leather, Color(0xFF14181D), 0.8f); else -> palette.leather }
+    val Walnut: Color get() = when { corp -> lerp(palette.walnut, Color(0xFF16191D), 0.92f); punk -> lerp(palette.walnut, Color(0xFF232930), 0.8f); else -> palette.walnut }
+    val Brass: Color get() = when { corp -> lerp(palette.brass, Color(0xFF7A828C), 0.9f); punk -> lerp(palette.brass, Color(0xFF8A95A0), 0.7f); else -> palette.brass }
+    val BrassLight: Color get() = when { corp -> lerp(palette.brassLight, Color(0xFFE9ECEF), 0.92f); punk -> lerp(palette.brassLight, Color(0xFFD3DBE2), 0.7f); else -> palette.brassLight }
+    val BrassDark: Color get() = when { corp -> lerp(palette.brassDark, Color(0xFF3A4048), 0.9f); punk -> lerp(palette.brassDark, Color(0xFF39414A), 0.7f); else -> palette.brassDark }
     val Copper: Color get() = palette.copper
     val Verdigris: Color get() = palette.verdigris
     val Parchment: Color get() = palette.parchment
@@ -248,7 +252,7 @@ object Steam {
         customNeon = Color(p.getInt("cust_neon", customNeon.toArgb()))
         val themeName = p.getString("theme", "Brass")
         palette = if (themeName == "Custom") customPalette(customMetal, customWood) else Palettes.firstOrNull { it.name == themeName } ?: Palettes[0]
-        style = if (p.getString("style", "steam") == "diesel") "diesel" else "steam"
+        style = cleanStyle(p.getString("style", "steam"))
         gearFactor = p.getFloat("gear", 1f)
         val nixieName = p.getString("nixie", "Orange")
         nixie = if (nixieName == "Custom") customNixie(customNeon) else NixieColors.firstOrNull { it.name == nixieName } ?: NixieColors[0]
@@ -470,9 +474,12 @@ object Steam {
         prefs(ctx).edit().putString("theme", pal.name).apply()
     }
 
-    /** Switch between "steam" and "diesel". Everything repaints straight away. */
+    /** Only the three known styles are allowed; anything else becomes "steam". */
+    fun cleanStyle(key: String?): String = if (key == "diesel" || key == "corp") key else "steam"
+
+    /** Switch between "steam", "diesel" and "corp". Everything repaints straight away. */
     fun chooseStyle(ctx: Context, key: String) {
-        style = if (key == "diesel") "diesel" else "steam"
+        style = cleanStyle(key)
         prefs(ctx).edit().putString("style", style).apply()
     }
 

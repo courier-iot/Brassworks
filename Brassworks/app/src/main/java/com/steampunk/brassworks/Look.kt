@@ -86,7 +86,7 @@ internal fun sanitizeLook(l: Look?): Look? {
     val c = l.colors ?: return null
     val metal = if (c.metal == "Custom" || Palettes.any { it.name == c.metal }) c.metal else "Brass"
     val nixie = if (c.nixie == "Custom" || NixieColors.any { it.name == c.nixie }) c.nixie else "Orange"
-    val style = if (c.style == "diesel") "diesel" else "steam"
+    val style = Steam.cleanStyle(c.style)
     return Look(c.copy(style = style, metal = metal, nixie = nixie), null, l.dim)
 }
 

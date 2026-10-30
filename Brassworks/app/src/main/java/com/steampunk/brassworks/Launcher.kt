@@ -550,6 +550,10 @@ private val BUILTIN_PRESETS = listOf(
         PresetItem(WType.NIXIE, 0, 0, 4, 2), PresetItem(WType.TIMER, 0, 2, 4, 2),
         PresetItem(WType.LANTERN, 0, 4, 2, 2), PresetItem(WType.VIALS, 2, 4, 2, 2),
     ), true, builtinLook("diesel", "Ember", "Red")),
+    Preset("Corp Blackout", listOf(
+        PresetItem(WType.DIGITAL, 0, 0, 4, 2), PresetItem(WType.WEATHER, 0, 2, 2, 3), PresetItem(WType.VIALS, 2, 2, 2, 3),
+        PresetItem(WType.MEMO, 0, 5, 4, 2),
+    ), true, builtinLook("corp", "Silver", "Red")),
 )
 
 /** The colours part of a ready-made preset, using the standard custom colours. */
@@ -2251,11 +2255,12 @@ private fun SettingsScreen(
                 SettingsSection("Look") {
                     Text("Style", style = MaterialTheme.typography.titleMedium, color = Steam.Parchment)
                     Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-                        SpeedChip("Steampunk", !Steam.punk, Modifier.weight(1f)) { Steam.chooseStyle(ctx, "steam") }
-                        SpeedChip("Dieselpunk", Steam.punk, Modifier.weight(1f)) { Steam.chooseStyle(ctx, "diesel") }
+                        SpeedChip("Steam", Steam.style == "steam", Modifier.weight(1f)) { Steam.chooseStyle(ctx, "steam") }
+                        SpeedChip("Diesel", Steam.style == "diesel", Modifier.weight(1f)) { Steam.chooseStyle(ctx, "diesel") }
+                        SpeedChip("Corp HUD", Steam.corp, Modifier.weight(1f)) { Steam.chooseStyle(ctx, "corp") }
                     }
                     Text(
-                        "Steampunk is wood, brass and rivets. Dieselpunk is gunmetal with cut corners, neon edges and grime. In Dieselpunk the Metal below tints the steel and Nixie glow colours the neon.",
+                        "Steampunk is wood, brass and rivets. Dieselpunk is gunmetal with cut corners, neon edges and grime. Corp HUD is flat black glass with cut corners, tick marks and a single signal colour. In Dieselpunk and Corp HUD the Metal below tints the steel and Nixie glow colours the accent (Red suits Corp HUD).",
                         style = MaterialTheme.typography.labelLarge, color = Steam.Steam,
                     )
                     Text("Metal", style = MaterialTheme.typography.titleMedium, color = Steam.Parchment)

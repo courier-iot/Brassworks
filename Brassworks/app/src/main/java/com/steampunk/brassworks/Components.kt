@@ -134,6 +134,23 @@ fun SteamBackdrop(modifier: Modifier = Modifier, wall: ImageBitmap? = Steam.wall
         if (wall != null) {
             Image(wall, contentDescription = null, modifier = Modifier.fillMaxSize(), contentScale = ContentScale.Crop)
             Box(Modifier.fillMaxSize().background(Color.Black.copy(alpha = Steam.wallDim)))
+        } else if (Steam.corp) {
+            // Corp HUD: a faint blueprint grid and a soft glow of the accent colour in the top corner
+            val glow = Steam.nixie.glow
+            Canvas(Modifier.fillMaxSize()) {
+                drawRect(Brush.radialGradient(listOf(glow.copy(alpha = 0.16f), Color.Transparent), Offset(size.width, 0f), size.height * 0.4f))
+                val step = 30.dp.toPx()
+                var x = 0f
+                while (x < size.width) {
+                    drawLine(Color.White.copy(alpha = 0.035f), Offset(x, 0f), Offset(x, size.height), strokeWidth = 1f)
+                    x += step
+                }
+                var y = 0f
+                while (y < size.height) {
+                    drawLine(Color.White.copy(alpha = 0.035f), Offset(0f, y), Offset(size.width, y), strokeWidth = 1f)
+                    y += step
+                }
+            }
         } else {
             if (Steam.punk) {
                 // riveted steel plates: faint seams with a bolt along each
@@ -226,7 +243,20 @@ private fun DrawScope.dieselTrim(seed: Int, lit: Color, glow: Color) {
     bolt(Offset(b, h - b)); bolt(Offset(w - b - 3.dp.toPx(), h - b - 3.dp.toPx()))
 }
 
-/** Dark wood panel with a brass frame and four rivets. In the Dieselpunk style it is gunmetal with cut corners, a neon edge and grime. */
+/** The Corp HUD finish for a panel: a solid accent bar down the left edge and a few tick marks along the bottom. */
+private fun DrawScope.corpTrim(glow: Color) {
+    drawRect(glow, Offset.Zero, Size(4.dp.toPx(), size.height))
+    val y = size.height - 8.dp.toPx()
+    var x = 18.dp.toPx()
+    var n = 0
+    while (x < size.width - 24.dp.toPx() && n < 14) {
+        drawLine(Color.White.copy(alpha = 0.12f), Offset(x, y), Offset(x, y + 3.dp.toPx()), strokeWidth = 1f)
+        x += 10.dp.toPx()
+        n++
+    }
+}
+
+/** Dark wood panel with a brass frame and four rivets. In the Dieselpunk style it is gunmetal with cut corners, a neon edge and grime. The Corp HUD is flat black glass with one accent bar. */
 @Composable
 fun RivetedPanel(
     modifier: Modifier = Modifier,
@@ -236,19 +266,34 @@ fun RivetedPanel(
     content: @Composable BoxScope.() -> Unit,
 ) {
     val punk = Steam.punk
-    val shape = if (punk) CutCornerShape(topStart = 14.dp, bottomEnd = 14.dp) else RoundedCornerShape(10.dp)
+    val corp = Steam.corp
+    val shape = when {
+        corp -> CutCornerShape(topEnd = 16.dp, bottomStart = 16.dp)
+        punk -> CutCornerShape(topStart = 14.dp, bottomEnd = 14.dp)
+        else -> RoundedCornerShape(10.dp)
+    }
     val seed = remember { Random.nextInt() }
     val lit = Steam.nixie.lit
     val glow = Steam.nixie.glow
     Box(
         modifier
-            .then(if (fillAlpha >= 0.99f) Modifier.shadow(6.dp, shape) else Modifier)
+            .then(if (fillAlpha >= 0.99f) Modifier.shadow(if (corp) 2.dp else 6.dp, shape) else Modifier)
             .clip(shape)
-            .background(Brush.verticalGradient(listOf(Steam.Walnut.copy(alpha = fillAlpha), Steam.Leather.copy(alpha = fillAlpha))))
-            .border(if (punk) 2.dp else 3.dp, Brush.verticalGradient(listOf(Steam.BrassLight, Steam.Brass, Steam.BrassDark)), shape)
+            .background(
+                if (corp) Brush.verticalGradient(listOf(Steam.Leather.copy(alpha = fillAlpha), Steam.Leather.copy(alpha = fillAlpha)))
+                else Brush.verticalGradient(listOf(Steam.Walnut.copy(alpha = fillAlpha), Steam.Leather.copy(alpha = fillAlpha)))
+            )
+            .border(
+                if (corp) 1.dp else if (punk) 2.dp else 3.dp,
+                if (corp) Brush.verticalGradient(listOf(glow.copy(alpha = 0.85f), Steam.BrassDark))
+                else Brush.verticalGradient(listOf(Steam.BrassLight, Steam.Brass, Steam.BrassDark)),
+                shape,
+            )
             .then(if (onClick != null) Modifier.clickable(onClick = onClick) else Modifier)
             .drawBehind {
-                if (punk) {
+                if (corp) {
+                    corpTrim(glow)
+                } else if (punk) {
                     dieselTrim(seed, lit, glow)
                 } else {
                     val i = 10.dp.toPx()
