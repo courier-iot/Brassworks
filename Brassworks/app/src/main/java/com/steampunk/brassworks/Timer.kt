@@ -138,7 +138,7 @@ object TimerEngine {
             false
         }
         if (!canNotify) {
-            Ringer.start(ctx, tone = tone)
+            Ringer.start(ctx, toneUri = tone)
             return
         }
         try {
@@ -170,7 +170,7 @@ object TimerEngine {
             n.flags = n.flags or Notification.FLAG_INSISTENT // keep the sound going until it is dealt with
             nm.notify(NOTE_ID, n)
         } catch (e: Exception) {
-            Ringer.start(ctx, tone = tone)
+            Ringer.start(ctx, toneUri = tone)
         }
     }
 
@@ -207,10 +207,10 @@ object Ringer {
             ?: RingtoneManager.getDefaultUri(RingtoneManager.TYPE_ALARM)
             ?: RingtoneManager.getDefaultUri(RingtoneManager.TYPE_NOTIFICATION)
 
-    fun start(ctx: Context, forMs: Long = 60_000L, tone: String = "") {
+    fun start(ctx: Context, forMs: Long = 60_000L, toneUri: String = "") {
         stop()
         try {
-            val uri = soundFor(tone)
+            val uri = soundFor(toneUri)
             val r = RingtoneManager.getRingtone(ctx.applicationContext, uri) ?: return
             if (Build.VERSION.SDK_INT >= 28) {
                 r.isLooping = true
