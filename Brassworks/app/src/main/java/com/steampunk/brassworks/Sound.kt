@@ -48,6 +48,18 @@ object Sfx {
     private var pool: SoundPool? = null
     private val ids = HashMap<Kind, Int>()
     private val ready = HashSet<Int>()
+    private var appCtx: Context? = null
+    private var loadedSet = ""
+
+    /**
+     * Each style has its own set of sounds: plain names for Steampunk, diesel_ for Dieselpunk (iron, relays and air)
+     * and cyber_ for Corp HUD (soft, smooth synth tones). A missing file falls back to the Steampunk one.
+     */
+    private fun setPrefix(): String = when (Steam.style) {
+        "diesel" -> "diesel_"
+        "corp" -> "cyber_"
+        else -> ""
+    }
 
     private fun prefs(ctx: Context) = ctx.getSharedPreferences("brassworks", Context.MODE_PRIVATE)
 
@@ -83,6 +95,8 @@ object Sfx {
 
     private fun start(ctx: Context) {
         if (pool != null) return
+        appCtx = ctx.applicationContext
+        loadedSet = setPrefix()
         try {
             val sp = SoundPool.Builder()
                 .setMaxStreams(3)
@@ -96,9 +110,13 @@ object Sfx {
             sp.setOnLoadCompleteListener { _, sampleId, status -> if (status == 0) ready.add(sampleId) }
             for (k in Kind.values()) {
                 try {
-                    ctx.applicationContext.assets.openFd("sounds/" + k.file).use { fd -> ids[k] = sp.load(fd, 1) }
+                    ctx.applicationContext.assets.openFd("sounds/" + loadedSet + k.file).use { fd -> ids[k] = sp.load(fd, 1) }
                 } catch (e: Exception) {
-                    // this sound file is not there, so that effect stays silent
+                    try {
+                        ctx.applicationContext.assets.openFd("sounds/" + k.file).use { fd -> ids[k] = sp.load(fd, 1) }
+                    } catch (e2: Exception) {
+                        // this sound file is not there, so that effect stays silent
+                    }
                 }
             }
             pool = sp
@@ -120,6 +138,13 @@ object Sfx {
 
     fun play(kind: Kind) {
         if (!enabled) return
+        if (loadedSet != setPrefix()) {
+            // the style changed since the sounds were loaded: load the new set (this one effect stays quiet while it loads)
+            val c = appCtx ?: return
+            stop()
+            start(c)
+            return
+        }
         val id = ids[kind] ?: return
         if (id !in ready) return
         val v = volumePct / 100f

@@ -46,7 +46,7 @@ private val CREDITS = listOf(
     ),
     InfoSection(
         "Sound effects",
-        "The sounds were made for Brassworks and are built from simple generated tones and noise. They are played on the phone and nothing is recorded.",
+        "The sounds were made for Brassworks and are built from simple generated tones and noise. Each style has its own set: brass and steam for Steampunk, iron, relays and air for Dieselpunk, and soft glassy tones for Corp HUD. They are played on the phone and nothing is recorded.",
     ),
     InfoSection(
         "Software",
