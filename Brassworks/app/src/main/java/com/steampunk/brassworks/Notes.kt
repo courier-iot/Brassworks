@@ -146,11 +146,11 @@ fun MemoContent(id: Long, prefs: SharedPreferences, editing: Boolean, title: Str
                     Text("+ Note", color = Steam.BrassLight, fontSize = small, modifier = Modifier.clickable {
                         put(NoteBook(book.notes + Note(false, ""), count)); menu = false
                     })
-                    Text("+ List", color = Steam.BrassLight, fontSize = small, modifier = Modifier.clickable {
+                    Text("+ Check", color = Steam.BrassLight, fontSize = small, modifier = Modifier.clickable {
                         put(NoteBook(book.notes + Note(true, ""), count)); menu = false
                     })
                 }
-                Text(if (note.list) "To text" else "To list", color = Steam.BrassLight, fontSize = small, modifier = Modifier.clickable {
+                Text(if (note.list) "Text" else "Check", color = Steam.BrassLight, fontSize = small, modifier = Modifier.clickable {
                     if (note.list) {
                         replaceCurrent(Note(false, parseItems(note.body).joinToString("\n") { it.label }))
                     } else {
@@ -158,7 +158,7 @@ fun MemoContent(id: Long, prefs: SharedPreferences, editing: Boolean, title: Str
                     }
                     menu = false
                 })
-                Text("Delete", color = Steam.Copper, fontSize = small, modifier = Modifier.clickable {
+                Text("✕", color = Steam.Copper, fontSize = 16.sp, modifier = Modifier.clickable {
                     if (count > 1) {
                         put(NoteBook(book.notes.filterIndexed { i, _ -> i != cur }, (cur - 1).coerceAtLeast(0)))
                     } else {

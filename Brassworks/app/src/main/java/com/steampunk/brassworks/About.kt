@@ -92,7 +92,7 @@ private val HELP = listOf(
     ),
     InfoSection(
         "Memorandum",
-        "One widget can hold several notes. Tap the three dots in its heading to add a note or a checklist, change the one you are on between text and list, or delete it, " +
+        "One widget can hold several notes. Tap the three dots in its heading to add a note or a checklist, switch the one you are on between Text and Check, or delete it with the cross, " +
             "and use the arrows to move between notes. In a list, tap a line to tick it and the cross to remove it. Notes you wrote before still open as they were.",
     ),
     InfoSection(
