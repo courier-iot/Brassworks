@@ -22,30 +22,50 @@ jobs:
           mkdir -p "$FONTS"
           echo "Fonts folder: $FONTS"
           good() { [ -s "$1" ] && [ "$(stat -c%s "$1")" -ge 20000 ] && case "$(head -c 4 "$1" | od -An -tx1 | tr -d ' \n')" in 00010000|4f54544f|74727565) true ;; *) false ;; esac; }
-          # pinned to one exact version of the google/fonts repository so the file names cannot change under us
-          SHA=2796410152d4f9524b68ed46e69c1b60f8e0f7c3
-          for f in OldStandard-Regular OldStandard-Bold OldStandard-Italic; do
-            if good "$FONTS/$f.ttf"; then echo "$f.ttf is already in the project, keeping it."; continue; fi
-            rm -f "$FONTS/$f.ttf"
-            for url in \
-              "https://raw.githubusercontent.com/google/fonts/$SHA/ofl/oldstandardtt/$f.ttf" \
-              "https://cdn.jsdelivr.net/gh/google/fonts@$SHA/ofl/oldstandardtt/$f.ttf" \
-              "https://raw.githubusercontent.com/google/fonts/main/ofl/oldstandardtt/$f.ttf"; do
-              echo "Trying $url"
-              if curl -fsSL --retry 3 --retry-delay 2 "$url" -o "$FONTS/$f.ttf" && good "$FONTS/$f.ttf"; then
-                echo "Got $f.ttf ($(stat -c%s "$FONTS/$f.ttf") bytes)"
-                break
-              fi
-              rm -f "$FONTS/$f.ttf"
+          missing() { for s in Regular Bold Italic; do good "$FONTS/OldStandard-$s.ttf" || return 0; done; return 1; }
+          if ! missing; then echo "All three font files are already in the project, keeping them."; fi
+          if missing; then
+            # 1. Ask git for just the Old Standard TT folder of Google Fonts, and pick the files by style
+            #    (so we do not have to guess their exact names).
+            TMP=$(mktemp -d)
+            if git clone --quiet --depth 1 --filter=blob:none --sparse https://github.com/google/fonts.git "$TMP/gf" \
+               && git -C "$TMP/gf" sparse-checkout set ofl/oldstandardtt; then
+              echo "Files in google/fonts ofl/oldstandardtt:"
+              ls -la "$TMP/gf/ofl/oldstandardtt" || true
+              for s in Regular Bold Italic; do
+                good "$FONTS/OldStandard-$s.ttf" && continue
+                src=$(ls "$TMP/gf/ofl/oldstandardtt"/*.ttf 2>/dev/null | grep -i -- "-$s\.ttf\$" | head -n 1)
+                if [ -n "$src" ]; then cp "$src" "$FONTS/OldStandard-$s.ttf"; echo "Copied $(basename "$src") as OldStandard-$s.ttf"; fi
+              done
+            else
+              echo "git clone of google/fonts failed"
+            fi
+          fi
+          if missing; then
+            # 2. Plain downloads, trying both name styles and two hosts
+            SHA=2796410152d4f9524b68ed46e69c1b60f8e0f7c3
+            for s in Regular Bold Italic; do
+              good "$FONTS/OldStandard-$s.ttf" && continue
+              for name in "OldStandard-$s" "OldStandardTT-$s"; do
+                for url in \
+                  "https://raw.githubusercontent.com/google/fonts/$SHA/ofl/oldstandardtt/$name.ttf" \
+                  "https://cdn.jsdelivr.net/gh/google/fonts@$SHA/ofl/oldstandardtt/$name.ttf" \
+                  "https://raw.githubusercontent.com/google/fonts/main/ofl/oldstandardtt/$name.ttf"; do
+                  echo "Trying $url"
+                  if curl -fsSL --retry 2 --retry-delay 2 "$url" -o "$FONTS/OldStandard-$s.ttf" && good "$FONTS/OldStandard-$s.ttf"; then
+                    echo "Got OldStandard-$s.ttf ($(stat -c%s "$FONTS/OldStandard-$s.ttf") bytes)"
+                    break 2
+                  fi
+                  rm -f "$FONTS/OldStandard-$s.ttf"
+                done
+              done
             done
-          done
-          ok=1
-          for f in OldStandard-Regular OldStandard-Bold OldStandard-Italic; do good "$FONTS/$f.ttf" || ok=0; done
-          if [ "$ok" = 1 ]; then
-            echo "Victorian font ready."
-          else
+          fi
+          if missing; then
             echo "::error::The Victorian font could not be downloaded, so this build has no Victorian font. Put OldStandard-Regular.ttf, OldStandard-Bold.ttf and OldStandard-Italic.ttf into app/src/main/assets/fonts in your repository and this step will use them."
             rm -f "$FONTS"/OldStandard-*.ttf
+          else
+            echo "Victorian font ready."
           fi
           ls -la "$FONTS"
       - name: Build
