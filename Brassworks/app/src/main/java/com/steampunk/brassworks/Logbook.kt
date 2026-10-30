@@ -65,6 +65,7 @@ private fun hm(minutes: Int): String = if (minutes >= 60) (minutes / 60).toStrin
 fun LogbookContent(title: String) = BoxWithConstraints(Modifier.fillMaxSize()) {
     val ctx = LocalContext.current
     val active = LocalActive.current
+    val mh = maxHeight // read here: inside the Column the scope's maxHeight is out of reach
     var granted by remember { mutableStateOf(hasUsageAccess(ctx)) }
     var rows by remember { mutableStateOf<List<LogEntry>>(emptyList()) }
     var total by remember { mutableStateOf(0) }
@@ -120,7 +121,7 @@ fun LogbookContent(title: String) = BoxWithConstraints(Modifier.fillMaxSize()) {
                 fontSize = 12.sp, fontFamily = Steam.font, color = Steam.Steam,
             )
         } else {
-            val fit = (((maxHeight.value - 22f) / 24f).toInt()).coerceAtLeast(1)
+            val fit = (((mh.value - 22f) / 24f).toInt()).coerceAtLeast(1)
             val most = rows.first().minutes.coerceAtLeast(1)
             rows.take(fit).forEach { r ->
                 Row(Modifier.fillMaxWidth().height(24.dp), verticalAlignment = Alignment.CenterVertically) {
