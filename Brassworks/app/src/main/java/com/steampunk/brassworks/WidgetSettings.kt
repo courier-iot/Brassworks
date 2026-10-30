@@ -36,13 +36,14 @@ data class WidgetSettings(
     val opacity: Float = 1f,        // 0.2 to 1: how solid the panel behind the widget is
     val vials: List<String> = DEFAULT_VIALS, // Vials widget: which readings, in order
     val vialColors: Map<String, Int> = emptyMap(), // Vials widget: own liquid colour per reading (ARGB). Missing = automatic
+    val player: String = "",        // Music player: package of the app to follow, blank = whichever is playing
 )
 
 internal fun encodeSettings(s: WidgetSettings): String {
     val vc = JSONObject()
     s.vialColors.forEach { (k, v) -> vc.put(k, v) }
     return JSONObject().put("c", s.clock).put("f", s.fahrenheit).put("t", s.title).put("o", s.opacity.toDouble())
-        .put("v", s.vials.joinToString(",")).put("vc", vc).toString()
+        .put("v", s.vials.joinToString(",")).put("vc", vc).put("p", s.player).toString()
 }
 
 internal fun decodeSettings(raw: String?): WidgetSettings {
@@ -60,6 +61,7 @@ internal fun decodeSettings(raw: String?): WidgetSettings {
             vialColors = o.optJSONObject("vc")?.let { vc ->
                 vc.keys().asSequence().filter { k -> VIAL_METRICS.any { it.key == k } }.associateWith { vc.optInt(it, 0) }
             }.orEmpty(),
+            player = o.optString("p", "").take(150),
         )
     } catch (e: Exception) {
         WidgetSettings()
@@ -130,6 +132,26 @@ fun WidgetSettingsDialog(w: WidgetItem, board: WidgetBoard, onClose: () -> Unit)
                         style = MaterialTheme.typography.labelLarge, color = Steam.Steam,
                     )
                     CogRow { CogButton("Notification access") { openListenerSettings(ctx) } }
+                    Text("Player to follow", style = MaterialTheme.typography.titleMedium, color = Steam.Parchment)
+                    Text(
+                        "Automatic follows whichever app is playing. Pick one to stay with that app even when others are running. " +
+                            "Only apps that are playing right now are listed, so start the one you want first. Needs Notification access.",
+                        style = MaterialTheme.typography.labelLarge, color = Steam.Steam,
+                    )
+                    val players = remember { activePlayers(ctx) }
+                    val choices = buildList {
+                        add("" to "Automatic")
+                        addAll(players)
+                        if (cur.player.isNotBlank() && players.none { it.first == cur.player }) add(cur.player to playerName(ctx, cur.player))
+                    }
+                    choices.chunked(2).forEach { rowOf ->
+                        Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                            rowOf.forEach { (pkg, name) ->
+                                SpeedChip(name, cur.player == pkg, Modifier.weight(1f)) { change { it.copy(player = pkg) } }
+                            }
+                            if (rowOf.size == 1) Spacer(Modifier.weight(1f))
+                        }
+                    }
                 }
 
                 if (w.type == WType.VIALS) {

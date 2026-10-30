@@ -87,7 +87,13 @@ private val HELP = listOf(
     InfoSection(
         "Music player",
         "Add a Music player and resize it: wide and short is a strip, taller and narrower is a square card. " +
-            "The buttons control whatever music app is playing. For the track name and progress, tap the prompt on the widget and switch on Notification access once.",
+            "The buttons control whatever music app is playing. For the track name and progress, tap the prompt on the widget and switch on Notification access once. " +
+            "Tap the record or the title to open the music app. If several players are running, the widget's cog lets you choose which one to follow.",
+    ),
+    InfoSection(
+        "Memorandum",
+        "One widget can hold several notes. Tap the three dots in its heading to add a note or a checklist, change the one you are on between text and list, or delete it, " +
+            "and use the arrows to move between notes. In a list, tap a line to tick it and the cross to remove it. Notes you wrote before still open as they were.",
     ),
     InfoSection(
         "Countdown, Agenda and Lantern",
@@ -119,6 +125,7 @@ private val HELP = listOf(
     InfoSection(
         "Presets",
         "Workshop > Presets saves and applies layouts. A preset changes the page you are on, and your previous layout is kept so you can undo it. " +
+            "Neon Diesel, Gaslight Study, Sea Captain and Night Shift come with a colour scheme and style as well, but never touch your wallpaper. " +
             "A preset of yours can also save your colours and style and your wallpaper, using the switches when you save. " +
             "Share sends a layout and its colours as a text code, never the wallpaper, and Import adds one you received.",
     ),

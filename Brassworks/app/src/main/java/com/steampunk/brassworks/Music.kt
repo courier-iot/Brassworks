@@ -96,6 +96,50 @@ private fun sendMediaKey(ctx: Context, code: Int) {
     am.dispatchMediaKeyEvent(KeyEvent(KeyEvent.ACTION_UP, code))
 }
 
+/** The name of an app, or its package name if that cannot be found. */
+private fun appLabelOf(ctx: Context, pkg: String): String = try {
+    val pm = ctx.packageManager
+    pm.getApplicationLabel(pm.getApplicationInfo(pkg, 0)).toString()
+} catch (e: Exception) {
+    pkg
+}
+
+/** The music apps that have a player running right now (package, name). Needs Notification access, otherwise empty. */
+internal fun activePlayers(ctx: Context): List<Pair<String, String>> = try {
+    if (!listenerEnabled(ctx)) {
+        emptyList()
+    } else {
+        val msm = ctx.getSystemService(Context.MEDIA_SESSION_SERVICE) as MediaSessionManager
+        msm.getActiveSessions(ComponentName(ctx, MediaListenerService::class.java))
+            .map { it.packageName to appLabelOf(ctx, it.packageName) }.distinctBy { it.first }
+    }
+} catch (e: Exception) {
+    emptyList()
+}
+
+/** The name to show for a player package chosen earlier. */
+internal fun playerName(ctx: Context, pkg: String): String = appLabelOf(ctx, pkg)
+
+/** Opens the player that is being shown, on its own now-playing screen if it offers one. Otherwise the phone's music app. */
+private fun openPlayer(ctx: Context, st: MusicState) {
+    try {
+        val pi = st.controller?.sessionActivity
+        if (pi != null) {
+            pi.send()
+            return
+        }
+    } catch (e: Exception) {
+        // try the next way
+    }
+    try {
+        val launch = if (st.pkg.isNotBlank()) ctx.packageManager.getLaunchIntentForPackage(st.pkg) else null
+        val intent = launch ?: Intent.makeMainSelectorActivity(Intent.ACTION_MAIN, Intent.CATEGORY_APP_MUSIC)
+        ctx.startActivity(intent.addFlags(Intent.FLAG_ACTIVITY_NEW_TASK))
+    } catch (e: Exception) {
+        Toast.makeText(ctx, "No music app found", Toast.LENGTH_SHORT).show()
+    }
+}
+
 /** What the player knows right now. The track details and progress need Notification access. */
 private class MusicState {
     var title by mutableStateOf("")
@@ -103,8 +147,11 @@ private class MusicState {
     var playing by mutableStateOf(false)
     var progress by mutableFloatStateOf(-1f) // 0 to 1, or -1 when unknown
     var access by mutableStateOf(false)
+    var pkg by mutableStateOf("")                 // the app whose player is being shown
+    var controller: MediaController? = null       // used to send play, pause and skip to that very player
 
-    fun refresh(ctx: Context) {
+    /** [follow] is the package of the player to show, or blank to take whichever is playing. */
+    fun refresh(ctx: Context, follow: String) {
         val am = ctx.getSystemService(Context.AUDIO_SERVICE) as AudioManager
         var ctl: MediaController? = null
         access = listenerEnabled(ctx)
@@ -112,16 +159,22 @@ private class MusicState {
             try {
                 val msm = ctx.getSystemService(Context.MEDIA_SESSION_SERVICE) as MediaSessionManager
                 val list = msm.getActiveSessions(ComponentName(ctx, MediaListenerService::class.java))
-                ctl = list.firstOrNull { it.playbackState?.state == PlaybackState.STATE_PLAYING } ?: list.firstOrNull()
+                ctl = if (follow.isNotBlank()) {
+                    list.firstOrNull { it.packageName == follow }
+                } else {
+                    list.firstOrNull { it.playbackState?.state == PlaybackState.STATE_PLAYING } ?: list.firstOrNull()
+                }
             } catch (e: SecurityException) {
                 access = false
             }
         }
+        controller = ctl
+        pkg = ctl?.packageName ?: ""
         if (ctl == null) {
             title = ""
             artist = ""
             progress = -1f
-            playing = am.isMusicActive
+            playing = if (follow.isNotBlank() && access) false else am.isMusicActive
             return
         }
         val md = ctl.metadata
@@ -146,16 +199,16 @@ private class MusicState {
  * so resize the widget to change its shape. The neon colour follows the nixie colour in Settings.
  */
 @Composable
-fun MusicContent() {
+fun MusicContent(follow: String = "") {
     val ctx = LocalContext.current
     val active = LocalActive.current
     val scope = rememberCoroutineScope()
     val st = remember { MusicState() }
 
-    LaunchedEffect(active) {
+    LaunchedEffect(active, follow) {
         if (!active) return@LaunchedEffect
         while (true) {
-            st.refresh(ctx)
+            st.refresh(ctx, follow)
             delay(if (st.playing) 1000L else 2500L)
         }
     }
@@ -165,17 +218,28 @@ fun MusicContent() {
     // a fresh random tint for the record every time the track changes
     val tint = remember(trackKey) { if (trackKey == "|") lit else Color(android.graphics.Color.HSVToColor(floatArrayOf(Random.nextFloat() * 360f, 0.6f, 0.95f))) }
 
+    // With a player chosen, the buttons talk to that player. Otherwise they go to whichever app Android treats as current.
     val press: (Int) -> Unit = { code ->
-        sendMediaKey(ctx, code)
+        val tc = if (follow.isNotBlank()) st.controller?.transportControls else null
+        if (tc != null) {
+            when (code) {
+                KeyEvent.KEYCODE_MEDIA_PREVIOUS -> tc.skipToPrevious()
+                KeyEvent.KEYCODE_MEDIA_NEXT -> tc.skipToNext()
+                else -> if (st.playing) tc.pause() else tc.play()
+            }
+        } else {
+            sendMediaKey(ctx, code)
+        }
         scope.launch {
             delay(350)
-            st.refresh(ctx)
+            st.refresh(ctx, follow)
         }
     }
     val onPrev = { press(KeyEvent.KEYCODE_MEDIA_PREVIOUS) }
     val onPlay = { press(KeyEvent.KEYCODE_MEDIA_PLAY_PAUSE) }
     val onNext = { press(KeyEvent.KEYCODE_MEDIA_NEXT) }
     val onAllow = { openListenerSettings(ctx) }
+    val onOpen = { openPlayer(ctx, st) }
 
     BoxWithConstraints(Modifier.fillMaxSize()) {
         val mw = maxWidth
@@ -183,10 +247,10 @@ fun MusicContent() {
         val strip = mw >= 230.dp && mw > mh * 1.5f
         if (strip) {
             Row(Modifier.fillMaxSize(), verticalAlignment = Alignment.CenterVertically) {
-                RecordArt(Modifier.size(minOf(mh, mw * 0.3f)), st.playing, tint)
+                RecordArt(Modifier.size(minOf(mh, mw * 0.3f)).clickable(onClick = onOpen), st.playing, tint)
                 Spacer(Modifier.width(14.dp))
                 Column(Modifier.weight(1f).fillMaxHeight(), verticalArrangement = Arrangement.Center) {
-                    TrackText(st, lit, true, false, 16f, onAllow)
+                    TrackText(st, lit, true, false, 16f, onAllow, onOpen)
                     Spacer(Modifier.height(6.dp))
                     ProgressLine(st.progress, lit)
                     Spacer(Modifier.height(6.dp))
@@ -198,8 +262,8 @@ fun MusicContent() {
             val textH = if (tall) 36.dp else 20.dp
             val art = maxOf(minOf(mh - 28.dp - textH - 4.dp - 18.dp, mw), 30.dp)
             Column(Modifier.fillMaxSize(), horizontalAlignment = Alignment.CenterHorizontally, verticalArrangement = Arrangement.SpaceBetween) {
-                RecordArt(Modifier.size(art), st.playing, tint)
-                TrackText(st, lit, tall, true, 14f, onAllow)
+                RecordArt(Modifier.size(art).clickable(onClick = onOpen), st.playing, tint)
+                TrackText(st, lit, tall, true, 14f, onAllow, onOpen)
                 ProgressLine(st.progress, lit)
                 ControlsRow(st.playing, Arrangement.Center, onPrev, onPlay, onNext)
             }
@@ -208,7 +272,7 @@ fun MusicContent() {
 }
 
 @Composable
-private fun TrackText(st: MusicState, lit: Color, showArtist: Boolean, center: Boolean, size: Float, onAllow: () -> Unit) {
+private fun TrackText(st: MusicState, lit: Color, showArtist: Boolean, center: Boolean, size: Float, onAllow: () -> Unit, onOpen: () -> Unit) {
     val glow = Steam.nixie.glow
     val align = if (center) TextAlign.Center else TextAlign.Start
     val head: String
@@ -221,6 +285,7 @@ private fun TrackText(st: MusicState, lit: Color, showArtist: Boolean, center: B
     Column(Modifier.fillMaxWidth(), horizontalAlignment = if (center) Alignment.CenterHorizontally else Alignment.Start) {
         Text(
             head, maxLines = 1, overflow = TextOverflow.Ellipsis, textAlign = align,
+            modifier = Modifier.clickable(onClick = onOpen),
             style = MaterialTheme.typography.titleMedium.copy(
                 fontSize = size.sp,
                 shadow = Shadow(glow.copy(alpha = 0.85f), Offset.Zero, 14f),

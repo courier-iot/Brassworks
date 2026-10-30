@@ -179,7 +179,7 @@ private fun Text(
 }
 
 /** Takes the cursor out of any text box and puts the keyboard away. */
-private fun dropFocus(ctx: Context, view: View, focus: FocusManager) {
+internal fun dropFocus(ctx: Context, view: View, focus: FocusManager) {
     focus.clearFocus()
     try {
         (ctx.getSystemService(Context.INPUT_METHOD_SERVICE) as InputMethodManager).hideSoftInputFromWindow(view.windowToken, 0)
@@ -532,6 +532,28 @@ private val BUILTIN_PRESETS = listOf(
         PresetItem(WType.CLOCK, 0, 0, 4, 2), PresetItem(WType.COMPASS, 0, 2, 2, 2),
         PresetItem(WType.MOON, 2, 2, 2, 2), PresetItem(WType.SUN, 0, 4, 4, 2),
     ), true),
+    // Looks: these also set the colours and style (never the wallpaper), and "Previous layout" keeps what you had
+    Preset("Neon Diesel", listOf(
+        PresetItem(WType.DIGITAL, 0, 0, 4, 2), PresetItem(WType.ENGINE, 0, 2, 4, 2),
+        PresetItem(WType.VIALS, 0, 4, 4, 2), PresetItem(WType.MUSIC, 0, 6, 4, 2),
+    ), true, builtinLook("diesel", "Cobalt", "Blue")),
+    Preset("Gaslight Study", listOf(
+        PresetItem(WType.CLOCK, 0, 0, 4, 2), PresetItem(WType.WEATHER, 0, 2, 4, 3),
+        PresetItem(WType.AGENDA, 0, 5, 2, 2), PresetItem(WType.MEMO, 2, 5, 2, 2),
+    ), true, builtinLook("steam", "Copper", "Amber")),
+    Preset("Sea Captain", listOf(
+        PresetItem(WType.ANALOG, 0, 0, 4, 2), PresetItem(WType.COMPASS, 0, 2, 2, 2), PresetItem(WType.BAROMETER, 2, 2, 2, 2),
+        PresetItem(WType.SUN, 0, 4, 4, 2),
+    ), true, builtinLook("steam", "Verdigris", "Green")),
+    Preset("Night Shift", listOf(
+        PresetItem(WType.NIXIE, 0, 0, 4, 2), PresetItem(WType.TIMER, 0, 2, 4, 2),
+        PresetItem(WType.LANTERN, 0, 4, 2, 2), PresetItem(WType.VIALS, 2, 4, 2, 2),
+    ), true, builtinLook("diesel", "Ember", "Red")),
+)
+
+/** The colours part of a ready-made preset, using the standard custom colours. */
+private fun builtinLook(style: String, metal: String, nixie: String) = Look(
+    LookColors(style, metal, nixie, 0xFFB5883E.toInt(), 0xFF3E2A1E.toInt(), 0xFFFFA24D.toInt()), null, 0.45f,
 )
 
 private fun encodePresets(list: List<Preset>): String = JSONArray().also { arr ->
@@ -692,7 +714,7 @@ class WidgetBoard(private val prefs: SharedPreferences, land: Boolean = false, p
             .apply()
     }
 
-    private fun hasData(id: Long) = prefs.contains("fname_$id") || prefs.contains("note_$id")
+    private fun hasData(id: Long) = prefs.contains("fname_$id") || prefs.contains("note_$id") || prefs.contains("notes_$id")
 
     fun addToFolder(id: Long, pkg: String) {
         val cur = folderApps[id].orEmpty()
@@ -1200,7 +1222,7 @@ class WidgetBoard(private val prefs: SharedPreferences, land: Boolean = false, p
         linkNames.remove(id)
         linkItems.remove(id)
         widgetSettings.remove(id)
-        prefs.edit().remove("wset_$id").remove("lname_$id").remove("llinks_$id").remove("note_$id").remove("fname_$id").remove("fapps_$id").remove("chr_acc_$id").remove("chr_start_$id").remove("chr_lap_$id")
+        prefs.edit().remove("wset_$id").remove("lname_$id").remove("llinks_$id").remove("note_$id").remove("notes_$id").remove("fname_$id").remove("fapps_$id").remove("chr_acc_$id").remove("chr_start_$id").remove("chr_lap_$id")
             .remove("ch_run_$id").remove("ch_base_$id").remove("ch_acc_$id").remove("ch_lap_$id")
             .remove("tm_mode_$id").remove("tm_set_$id").remove("tm_end_$id").remove("tm_left_$id").remove("al_min_$id").remove("al_at_$id").apply()
         TimerEngine.forget(appCtx, id)
@@ -2793,7 +2815,7 @@ private fun WidgetBody(
             WType.BOILER -> GaugeContent(battery, true, ws.title.ifBlank { "Boiler pressure" }, "${(battery * 100).toInt()}% charged")
             WType.CARGO -> GaugeContent(storage.first, false, ws.title.ifBlank { "Cargo hold" }, "${(storage.first * 100).toInt()}% full")
             WType.VIALS -> VialsContent(ws.vials, ws.fahrenheit, ws.vialColors)
-            WType.MUSIC -> MusicContent()
+            WType.MUSIC -> MusicContent(ws.player)
             WType.ENGINE -> EngineRoomContent(ws.fahrenheit)
             WType.COMPASS -> CompassContent()
             WType.BAROMETER -> BarometerContent(ws.title.ifBlank { "Barometer" })
@@ -3089,59 +3111,6 @@ private fun AlmanacContent(now: LocalDateTime) = BoxWithConstraints(Modifier.fil
                         }
                     }
                 }
-            }
-        }
-    }
-}
-
-@Composable
-private fun MemoContent(id: Long, prefs: SharedPreferences, editing: Boolean, title: String = "Memorandum") {
-    val ctx = LocalContext.current
-    val focus = LocalFocusManager.current
-    val view = LocalView.current
-    var text by remember(id) { mutableStateOf(prefs.getString("note_$id", "") ?: "") }
-    // The note can only take focus after you tap it, so it never pops the keyboard open by itself.
-    var armed by remember { mutableStateOf(false) }
-    var focused by remember { mutableStateOf(false) }
-    val requester = remember { FocusRequester() }
-    LaunchedEffect(armed) { if (armed) requester.requestFocus() }
-    Column(Modifier.fillMaxSize()) {
-        Row(verticalAlignment = Alignment.CenterVertically) {
-            Text(
-                title, style = MaterialTheme.typography.titleMedium, color = Steam.BrassLight,
-                fontSize = 14.sp, modifier = Modifier.weight(1f),
-            )
-            if (focused) {
-                Text(
-                    "Done", style = MaterialTheme.typography.titleMedium, color = Steam.BrassLight, fontSize = 14.sp,
-                    modifier = Modifier.clickable { dropFocus(ctx, view, focus) }.padding(horizontal = 6.dp),
-                )
-            }
-        }
-        Spacer(Modifier.height(6.dp))
-        Box(Modifier.fillMaxWidth().weight(1f)) {
-            BasicTextField(
-                value = text,
-                onValueChange = { text = it; prefs.edit().putString("note_$id", it).apply() },
-                enabled = !editing,
-                textStyle = TextStyle(color = Steam.Parchment, fontFamily = Steam.font, fontSize = 15.sp, lineHeight = 21.sp),
-                cursorBrush = SolidColor(Steam.BrassLight),
-                modifier = Modifier
-                    .fillMaxSize()
-                    .focusRequester(requester)
-                    .focusProperties { canFocus = armed }
-                    .onFocusChanged { focused = it.isFocused; if (!it.isFocused) armed = false },
-                decorationBox = { inner ->
-                    Box {
-                        if (text.isEmpty()) Text("Tap to jot a note", style = MaterialTheme.typography.labelLarge, color = Steam.Steam.copy(alpha = 0.6f))
-                        inner()
-                    }
-                },
-            )
-            if (!armed && !editing) {
-                Box(
-                    Modifier.fillMaxSize().clickable(interactionSource = remember { MutableInteractionSource() }, indication = null) { armed = true }
-                )
             }
         }
     }

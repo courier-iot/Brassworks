@@ -40,7 +40,7 @@ object Backup {
     /** Everything that makes up the widget layout, including each widget's own notes, folders, links and settings. */
     private val layoutKeys = Regex(
         "(widgets_v1|widgets_land)(_p\\d+)?|gsig_.*|lo_\\d+|pages|grid|grid_done|grid_kind|fab_.*|" +
-            "(wset|lname|llinks|note|fname|fapps|chr_acc|chr_start|chr_lap|ch_run|ch_base|ch_acc|ch_lap|tm_mode|tm_set|tm_end|tm_left|al_min|al_at|aw)_\\d+",
+            "(wset|lname|llinks|note|notes|fname|fapps|chr_acc|chr_start|chr_lap|ch_run|ch_base|ch_acc|ch_lap|tm_mode|tm_set|tm_end|tm_left|al_min|al_at|aw)_\\d+",
     )
 
     /** The look and feel: colours, style, font, gear speed and the turning-gears switch. */
