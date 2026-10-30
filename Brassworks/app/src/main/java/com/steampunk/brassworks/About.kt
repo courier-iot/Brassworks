@@ -45,6 +45,10 @@ private val CREDITS = listOf(
         "Counted from the average length of a lunar month, starting from the new moon of 6 January 2000. It is good to about half a day.",
     ),
     InfoSection(
+        "Sound effects",
+        "The sounds were made for Brassworks and are built from simple generated tones and noise. They are played on the phone and nothing is recorded.",
+    ),
+    InfoSection(
         "Software",
         "Jetpack Compose, AndroidX and Material 3 by Google, used under the Apache License, Version 2.0.",
     ),
@@ -99,7 +103,9 @@ private val HELP = listOf(
         "Countdown, Agenda and Lantern",
         "Countdown is a timer and an alarm clock: tap its title to switch between them. They use Android's alarm service, so they ring even when the launcher is closed. " +
             "Android asks once if the launcher may send notifications, which is how it rings. Coming back to the home screen, tapping the notification or pressing Quiet stops the sound. " +
-            "Agenda lists what is coming up in your calendar after you tap Allow. Lantern switches your torch on and off with a tap and needs no permission.",
+            "Agenda lists what is coming up in your calendar after you tap Allow. Lantern switches your torch on and off with a tap and needs no permission. " +
+            "A countdown has three slots (tap 1, 2 or 3 beside its title; a dot means it is running), and when one rings you can press Snooze for five minutes. " +
+            "The cog on a Countdown chooses its ringtone. The cog on a Lantern can put the torch out by itself after a few minutes and, on phones with Android 13 or later that allow it, dim it.",
     ),
     InfoSection(
         "Weather",
@@ -111,6 +117,11 @@ private val HELP = listOf(
         "Add > Widget from another app lists the widgets your other apps offer. Android may ask once to let Brassworks show it, and some open their own set-up screen first. " +
             "They are drawn by the other app, so they keep its look rather than the brass one. Move and resize them in Arrange mode. " +
             "They belong to this phone, so presets and backups leave them out.",
+    ),
+    InfoSection(
+        "Sound and steam",
+        "Settings > Look has Sound effects and Steam puffs, both off until you switch them on. The sounds are soft brass clicks and clunks for opening an app, the gear, the Workshop, arranging, putting a widget down and changing page, " +
+            "and they follow your phone's volume, so silent mode mutes them. Steam puffs rise from the gear when you open the Workshop or start arranging.",
     ),
     InfoSection(
         "Recent apps and Brass icons",

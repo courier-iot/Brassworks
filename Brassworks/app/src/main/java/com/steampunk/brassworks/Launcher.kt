@@ -247,6 +247,7 @@ private fun loadRecent(prefs: SharedPreferences): List<String> =
     (prefs.getString("recent", "") ?: "").split(",").filter { it.isNotBlank() }
 
 private fun launchApp(ctx: Context, app: AppInfo) {
+    Sfx.play(Sfx.Kind.TICK)
     val i = Intent(Intent.ACTION_MAIN)
         .addCategory(Intent.CATEGORY_LAUNCHER)
         .setComponent(app.component)
@@ -926,6 +927,7 @@ class WidgetBoard(private val prefs: SharedPreferences, land: Boolean = false, p
     fun goToPage(p: Int) {
         if (p == page || p !in 0 until pageCount || areaW <= 0f) return
         persist()
+        Sfx.play(Sfx.Kind.WHOOSH)
         page = p
         val list = loadPage()
         items = list
@@ -1158,6 +1160,7 @@ class WidgetBoard(private val prefs: SharedPreferences, land: Boolean = false, p
             }
             items = list.map { if (it.id == id) result else it }
         }
+        if (!resizing) Sfx.play(Sfx.Kind.DROP)
         persist()
     }
 
@@ -1224,7 +1227,7 @@ class WidgetBoard(private val prefs: SharedPreferences, land: Boolean = false, p
         widgetSettings.remove(id)
         prefs.edit().remove("wset_$id").remove("lname_$id").remove("llinks_$id").remove("note_$id").remove("notes_$id").remove("fname_$id").remove("fapps_$id").remove("chr_acc_$id").remove("chr_start_$id").remove("chr_lap_$id")
             .remove("ch_run_$id").remove("ch_base_$id").remove("ch_acc_$id").remove("ch_lap_$id")
-            .remove("tm_mode_$id").remove("tm_set_$id").remove("tm_end_$id").remove("tm_left_$id").remove("al_min_$id").remove("al_at_$id").apply()
+            .remove("tm_mode_$id").remove("tm_set_$id").remove("tm_end_$id").remove("tm_left_$id").remove("tm_slot_$id").remove("tm_set1_$id").remove("tm_end1_$id").remove("tm_left1_$id").remove("tm_set2_$id").remove("tm_end2_$id").remove("tm_left2_$id").remove("al_min_$id").remove("al_at_$id").apply()
         TimerEngine.forget(appCtx, id)
         AppWidgets.release(appCtx, prefs.getInt("aw_$id", -1))
         prefs.edit().remove("aw_$id").apply()
@@ -1400,6 +1403,7 @@ fun LauncherRoot(tick: Int, homeSignal: Int, active: Boolean = true) {
     var settings by remember { mutableStateOf(false) }
     var fabMenu by remember { mutableStateOf(false) }
     var picker by remember { mutableStateOf(false) }
+    var puff by remember { mutableIntStateOf(0) } // counts the times steam should puff from the gear
     var appWidgetChooser by remember { mutableStateOf(false) }
     var editing by remember { mutableStateOf(false) }
     var openFolder by remember { mutableStateOf<Long?>(null) }
@@ -1512,6 +1516,7 @@ fun LauncherRoot(tick: Int, homeSignal: Int, active: Boolean = true) {
     val visibleApps = remember(apps, hidden) { apps.filter { it.packageName !in hidden } }
 
     fun applyPreset(p: Preset) {
+        Sfx.play(Sfx.Kind.BELL)
         val dropped = board.applyPreset(p)
         presetDialog = false
         settings = false
@@ -1555,11 +1560,12 @@ fun LauncherRoot(tick: Int, homeSignal: Int, active: Boolean = true) {
                     onLongPress = { menuApp = it; menuFolder = null },
                     onOpenFolder = { openFolder = it },
                     onOpenLinks = { openLinks = it },
-                    onFabTap = { drawer = true },
-                    onFabDoubleTap = { fabMenu = true },
+                    onFabTap = { Sfx.play(Sfx.Kind.GEAR); drawer = true },
+                    onFabDoubleTap = { Sfx.play(Sfx.Kind.HISS); puff++; fabMenu = true },
                     onWidgetSettings = { widgetDialog = it },
                     overlayOpen = drawer || settings,
-                    onEnterEdit = { editing = true },
+                    onEnterEdit = { Sfx.play(Sfx.Kind.RELEASE); puff++; editing = true },
+                    puff = puff,
                     onAdd = { picker = true },
                     onDone = { editing = false },
                 )
@@ -1680,7 +1686,7 @@ fun LauncherRoot(tick: Int, homeSignal: Int, active: Boolean = true) {
                         Text("THE WORKSHOP", style = MaterialTheme.typography.titleLarge, color = Steam.BrassLight)
                         Text("Tap the gear to open the archive, double-tap it for this menu, and press and hold it, then drag, to move it. Arrange moves and resizes widgets and is where you add new ones, Presets saves and applies layouts, Pages adds and removes home pages, and Settings has everything else, including the metal.", style = MaterialTheme.typography.labelLarge, color = Steam.Steam)
                         CogRow {
-                            CogButton("Arrange") { fabMenu = false; editing = true }
+                            CogButton("Arrange") { fabMenu = false; Sfx.play(Sfx.Kind.RELEASE); puff++; editing = true }
                             CogButton("Presets") { fabMenu = false; presetDialog = true }
                             CogButton("Pages") { fabMenu = false; pagesDialog = true }
                             CogButton("Settings") { fabMenu = false; settings = true }
@@ -2294,6 +2300,21 @@ private fun SettingsScreen(
                     }
                     SettingSwitch("Turning gears", "Turn off to save battery", animations, onAnimations)
                     SettingSwitch(
+                        "Sound effects", "Soft brass clicks, clunks and steam as you use the launcher. They follow your phone's volume, so silent mode mutes them.",
+                        Sfx.enabled,
+                    ) { Sfx.setEnabled(ctx, it) }
+                    if (Sfx.enabled) {
+                        Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                            SpeedChip("Quiet", Sfx.volumePct == 30, Modifier.weight(1f)) { Sfx.setVolume(ctx, 30) }
+                            SpeedChip("Normal", Sfx.volumePct == 65, Modifier.weight(1f)) { Sfx.setVolume(ctx, 65) }
+                            SpeedChip("Loud", Sfx.volumePct == 100, Modifier.weight(1f)) { Sfx.setVolume(ctx, 100) }
+                        }
+                    }
+                    SettingSwitch(
+                        "Steam puffs", "Puffs of steam rise from the gear when you open the Workshop or start arranging. Needs turning gears on.",
+                        Sfx.puffs,
+                    ) { Sfx.setPuffs(ctx, it) }
+                    SettingSwitch(
                         "Brass icons", "Draws app icons in the colour of your metal, so they match the theme. In Dieselpunk they turn steel.",
                         Steam.tintIcons,
                     ) { Steam.setTintIcons(ctx, it) }
@@ -2582,6 +2603,7 @@ private fun HomeScreen(
     onWidgetSettings: (Long) -> Unit,
     overlayOpen: Boolean,
     onEnterEdit: () -> Unit,
+    puff: Int,
     onAdd: () -> Unit,
     onDone: () -> Unit,
 ) {
@@ -2707,6 +2729,10 @@ private fun HomeScreen(
                     modifier = Modifier.align(Alignment.BottomEnd)
                         .offset(fabDx.coerceIn(-maxDx, 0f).dp, fabDy.coerceIn(-maxDy, 0f).dp),
                 )
+                SteamPuffs(
+                    puff,
+                    Modifier.align(Alignment.BottomEnd).offset(fabDx.coerceIn(-maxDx, 0f).dp, fabDy.coerceIn(-maxDy, 0f).dp),
+                )
             }
         }
     }
@@ -2824,10 +2850,10 @@ private fun WidgetBody(
             WType.WEATHER -> WeatherContent(prefs, ws.fahrenheit, ws.title.ifBlank { "Weather" })
             WType.SOLAR -> SolarContent(now)
             WType.CHRONO -> ChronoContent(w.id, prefs)
-            WType.TIMER -> TimerContent(w.id, prefs, is24w)
+            WType.TIMER -> TimerContent(w.id, prefs, is24w, ws.tone)
             WType.ALMANAC -> AlmanacContent(now)
             WType.AGENDA -> AgendaContent(is24w, ws.title.ifBlank { "Agenda" })
-            WType.LANTERN -> LanternContent()
+            WType.LANTERN -> LanternContent(ws.lanternMin, ws.lanternLevel)
             WType.APPWIDGET -> AppWidgetContent(w.id, prefs)
             WType.MEMO -> MemoContent(w.id, prefs, editing, ws.title.ifBlank { "Memorandum" })
             WType.SHELF -> AppRowContent(

@@ -18,6 +18,7 @@ class MainActivity : ComponentActivity() {
         super.onCreate(savedInstanceState)
         SafeMode.begin(this) // counts this start, and steps in if the last few all failed
         Steam.load(this) // saved theme and gear speed, before anything is drawn
+        Sfx.load(this) // sound effects and steam puffs, if you switched them on
         setContent { SteampunkTheme { LauncherRoot(tick, homeSignal, active) } }
     }
 
