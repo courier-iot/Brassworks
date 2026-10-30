@@ -44,10 +44,11 @@ object Backup {
     )
 
     /** The look and feel: colours, style, font, gear speed and the turning-gears switch. */
-    private val lookKeys = listOf("theme", "nixie", "style", "cust_metal", "cust_wood", "cust_neon", "gear", "font", "wall_dim", "anim", "tint_icons", "sfx_on", "sfx_vol", "sfx_puffs")
+    private val lookKeys = listOf("theme", "nixie", "style", "cust_metal", "cust_wood", "cust_neon", "gear", "font", "wall_dim", "anim", "tint_icons", "sfx_on", "sfx_vol", "sfx_puffs", "sched_v1")
 
     /** Notes the launcher keeps about itself (reminders and safe mode). They are not part of a backup. */
     private val bookkeepingKeys = setOf(
+        "sched_on", "sched_base", // which scheduled look is on, and the look to go back to
         "boot_count", "safe_stage", "safe_notice", "last_backup", "remind_snooze", "first_seen",
         "wx_json", "wx_time", "wx_spot", // the Weather widget's last answer
     )

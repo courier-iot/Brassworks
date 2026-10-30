@@ -467,6 +467,9 @@ enum class WType(
     ALMANAC("Almanac", "Month calendar with today marked", 340f, 280f, 200f, 200f, "Recommended: the month at a glance"),
     AGENDA("Agenda", "What is coming up in your calendar, day by day", 340f, 200f, 200f, 110f, "Asks to read your calendar once"),
     LANTERN("Lantern", "A torch you switch on and off with a tap", 164f, 120f, 110f, 90f, "Recommended: no permission needed"),
+    WORLD("World clock", "The time here and in up to six cities you choose", 164f, 190f, 150f, 100f, "Recommended: no permission needed"),
+    CONTACTS("Speed dial", "A few people as round tiles. Tap to call, hold to text", 340f, 120f, 110f, 100f, "No permission needed. You pick each contact yourself"),
+    LOGBOOK("Logbook", "Which apps you used most today, as bars", 340f, 220f, 200f, 110f, "Asks you to switch on Usage access once"),
     MEMO("Memorandum", "A notepad you can type in", 164f, 140f, 150f, 100f, "Recommended: jot things down fast"),
     SHELF("App shelf", "Apps you choose, one tap away", 340f, 130f, 110f, 100f, "Recommended: replaces the old dock"),
     FOLDER("Folder", "A named bundle of apps. Tap to open it", 164f, 150f, 110f, 110f, "Recommended: keeps related apps tidy"),
@@ -1367,6 +1370,12 @@ class WidgetBoard(private val prefs: SharedPreferences, land: Boolean = false, p
         }
     }
 
+    /** The look (colours and style) of a built-in or saved preset, or null if it has none. Used by Scheduled looks. */
+    fun lookOf(name: String): Look? = (BUILTIN_PRESETS + userPresets).firstOrNull { it.name == name }?.look
+
+    /** Names of every preset that carries colours and a style, built-ins first. */
+    fun lookNames(): List<String> = (BUILTIN_PRESETS + userPresets).filter { it.look?.colors != null && it.name != AUTO_PRESET }.map { it.name }.distinct()
+
     fun applyPreset(p: Preset): Int {
         savePreset(AUTO_PRESET, sweep = false) // undo point, with today's colours and wallpaper too
         val raw = instantiate(p, items.orEmpty())
@@ -1429,6 +1438,7 @@ fun LauncherRoot(tick: Int, homeSignal: Int, active: Boolean = true) {
     var presetDialog by remember { mutableStateOf(false) }
     var saveDialog by remember { mutableStateOf(false) }
     var hiddenDialog by remember { mutableStateOf(false) }
+    var scheduleDialog by remember { mutableStateOf(false) }
     var importDialog by remember { mutableStateOf(false) }
     var renameFrom by remember { mutableStateOf<String?>(null) }
     val pickFont = rememberLauncherForActivityResult(ActivityResultContracts.OpenDocument()) { uri ->
@@ -1470,6 +1480,18 @@ fun LauncherRoot(tick: Int, homeSignal: Int, active: Boolean = true) {
     // Coming back to the home screen counts as noticing a ringing timer or alarm, so it goes quiet.
     LaunchedEffect(active) { if (active) TimerEngine.silence(ctx) }
 
+    // Scheduled looks: while the home screen is showing, check every half minute whether a rule fits.
+    LaunchedEffect(active) {
+        while (active) {
+            try {
+                LookSchedule.check(ctx, prefs, board)
+            } catch (e: Exception) {
+                // a bad rule must never stop the launcher
+            }
+            delay(30_000)
+        }
+    }
+
     // The program has now been running long enough to count as a good start (see SafeMode).
     LaunchedEffect(Unit) {
         delay(5000)
@@ -1489,7 +1511,7 @@ fun LauncherRoot(tick: Int, homeSignal: Int, active: Boolean = true) {
     // Pressing the Home button closes everything and returns to the main screen.
     LaunchedEffect(homeSignal) {
         drawer = false; menuApp = null; settings = false; fabMenu = false; picker = false; editing = false
-        openFolder = null; openLinks = null; linkEdit = null; menuFolder = null; folderPick = null; presetDialog = false; saveDialog = false; hiddenDialog = false; importDialog = false; renameFrom = null
+        openFolder = null; openLinks = null; linkEdit = null; menuFolder = null; folderPick = null; presetDialog = false; saveDialog = false; hiddenDialog = false; scheduleDialog = false; importDialog = false; renameFrom = null
         pagesDialog = false; confirmRemovePage = false; widgetDialog = null; creditsDialog = false; helpDialog = false
         confirm = null; pendingRestore = null
         board.goToPage(0)
@@ -1601,6 +1623,7 @@ fun LauncherRoot(tick: Int, homeSignal: Int, active: Boolean = true) {
                         onShare = { shareLayout() },
                         onImport = { importDialog = true },
                         onHidden = { hiddenDialog = true },
+                        onSchedule = { scheduleDialog = true },
                         recentOn = recentOn,
                         onRecentOn = { recentOn = it; prefs.edit().putBoolean("recent_on", it).apply() },
                         onClearRecent = { recent = emptyList(); prefs.edit().remove("recent").apply() },
@@ -1759,6 +1782,11 @@ fun LauncherRoot(tick: Int, homeSignal: Int, active: Boolean = true) {
         }
         linkEdit?.let { (lid, index) ->
             LinkEditDialog(board = board, folder = lid, index = index, onDone = { linkEdit = null })
+        }
+
+        // Scheduled looks
+        if (scheduleDialog) {
+            ScheduleDialog(board = board, prefs = prefs, onClose = { scheduleDialog = false })
         }
 
         // Hidden apps
@@ -2217,6 +2245,7 @@ private fun SettingsScreen(
     onShare: () -> Unit,
     onImport: () -> Unit,
     onHidden: () -> Unit,
+    onSchedule: () -> Unit,
     recentOn: Boolean,
     onRecentOn: (Boolean) -> Unit,
     onClearRecent: () -> Unit,
@@ -2323,6 +2352,12 @@ private fun SettingsScreen(
                         "Brass icons", "Draws app icons in the colour of your metal, so they match the theme. In Dieselpunk they turn steel.",
                         Steam.tintIcons,
                     ) { Steam.setTintIcons(ctx, it) }
+                    Text("Scheduled looks", style = MaterialTheme.typography.titleMedium, color = Steam.Parchment)
+                    Text(
+                        "Switch your colours and style by the clock or while charging, for example Night Shift every evening. Your own look comes back afterwards. Layouts never change.",
+                        style = MaterialTheme.typography.labelLarge, color = Steam.Steam,
+                    )
+                    CogRow { CogButton("Schedule") { onSchedule() } }
                     Text("Font", style = MaterialTheme.typography.titleMedium, color = Steam.Parchment)
                     Text("The Brassworks, est. 1887 · 0123456789", fontSize = 16.sp, fontFamily = Steam.font, color = Steam.BrassLight)
                     Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
@@ -2859,6 +2894,9 @@ private fun WidgetBody(
             WType.ALMANAC -> AlmanacContent(now)
             WType.AGENDA -> AgendaContent(is24w, ws.title.ifBlank { "Agenda" })
             WType.LANTERN -> LanternContent(ws.lanternMin, ws.lanternLevel)
+            WType.WORLD -> WorldClockContent(now, is24w, ws.zones, ws.title.ifBlank { "World clock" })
+            WType.CONTACTS -> SpeedDialContent(ws.dial, ws.title.ifBlank { "Speed dial" })
+            WType.LOGBOOK -> LogbookContent(ws.title.ifBlank { "Logbook" })
             WType.APPWIDGET -> AppWidgetContent(w.id, prefs)
             WType.MEMO -> MemoContent(w.id, prefs, editing, ws.title.ifBlank { "Memorandum" })
             WType.SHELF -> AppRowContent(

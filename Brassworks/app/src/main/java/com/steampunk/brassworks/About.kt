@@ -119,6 +119,17 @@ private val HELP = listOf(
             "They belong to this phone, so presets and backups leave them out.",
     ),
     InfoSection(
+        "World clock, Speed dial and Logbook",
+        "World clock shows your own time and up to six cities; add them in its cog. Speed dial holds up to eight people as round tiles: tap one to open the dialler with the number ready, press and hold to write a text. " +
+            "You pick each contact in its cog, and Brassworks sees only the contacts you pick, which are kept in the widget and in your backup file. " +
+            "Logbook shows which apps you used most today. Tap Allow and switch on Usage access for Brassworks once; Android keeps the figures and Brassworks only reads them.",
+    ),
+    InfoSection(
+        "Scheduled looks",
+        "Settings > Look > Schedule switches your colours and style by the time of day or while charging, using the look of a preset such as Night Shift. " +
+            "When the rule stops fitting, your own look comes back. Layouts, widgets and wallpaper never change, and it is checked every half minute while the home screen is showing.",
+    ),
+    InfoSection(
         "Sound and steam",
         "Settings > Look has Sound effects and Steam puffs, both off until you switch them on. The sounds are soft brass clicks and clunks for opening an app, the gear, the Workshop, arranging, putting a widget down and changing page, " +
             "and they follow your phone's volume, so silent mode mutes them. Steam puffs rise from the gear when you open the Workshop or start arranging.",

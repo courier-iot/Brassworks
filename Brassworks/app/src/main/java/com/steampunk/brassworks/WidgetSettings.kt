@@ -32,6 +32,7 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.window.Dialog
+import org.json.JSONArray
 import org.json.JSONObject
 import kotlin.math.roundToInt
 
@@ -47,13 +48,16 @@ data class WidgetSettings(
     val lanternMin: Int = 0,        // Lantern: switch off by itself after this many minutes, 0 = never
     val lanternLevel: Int = 100,    // Lantern: brightness in percent, on phones that can dim the torch
     val player: String = "",        // Music player: package of the app to follow, blank = whichever is playing
+    val zones: List<String> = emptyList(), // World clock: time-zone ids such as "Asia/Tokyo"
+    val dial: List<String> = emptyList(),  // Speed dial: "Name|number" for each person
 )
 
 internal fun encodeSettings(s: WidgetSettings): String {
     val vc = JSONObject()
     s.vialColors.forEach { (k, v) -> vc.put(k, v) }
     return JSONObject().put("c", s.clock).put("f", s.fahrenheit).put("t", s.title).put("o", s.opacity.toDouble())
-        .put("v", s.vials.joinToString(",")).put("vc", vc).put("p", s.player).put("tn", s.tone).put("lm", s.lanternMin).put("ll", s.lanternLevel).toString()
+        .put("v", s.vials.joinToString(",")).put("vc", vc).put("p", s.player).put("tn", s.tone).put("lm", s.lanternMin).put("ll", s.lanternLevel)
+        .put("z", JSONArray(s.zones)).put("sd", JSONArray(s.dial)).toString()
 }
 
 internal fun decodeSettings(raw: String?): WidgetSettings {
@@ -75,6 +79,10 @@ internal fun decodeSettings(raw: String?): WidgetSettings {
             tone = o.optString("tn", "").take(400),
             lanternMin = o.optInt("lm", 0).let { if (it in listOf(2, 5, 10, 30)) it else 0 },
             lanternLevel = o.optInt("ll", 100).coerceIn(10, 100),
+            zones = o.optJSONArray("z")?.let { a -> (0 until a.length()).map { a.optString(it, "") } }.orEmpty()
+                .filter { id -> id.contains('/') && id.length < 60 && java.time.ZoneId.getAvailableZoneIds().contains(id) }.distinct().take(MAX_ZONES),
+            dial = o.optJSONArray("sd")?.let { a -> (0 until a.length()).map { a.optString(it, "") } }.orEmpty()
+                .filter { dialEntryOf(it) != null }.distinct().take(MAX_DIAL),
         )
     } catch (e: Exception) {
         WidgetSettings()
@@ -83,16 +91,20 @@ internal fun decodeSettings(raw: String?): WidgetSettings {
 
 /** Widgets that show a time, so a 12 or 24 hour choice makes sense. */
 internal fun WType.hasClockFormat() = this == WType.CLOCK || this == WType.NIXIE || this == WType.ANALOG || this == WType.DIGITAL || this == WType.SUN ||
-    this == WType.TIMER || this == WType.AGENDA
+    this == WType.TIMER || this == WType.AGENDA || this == WType.WORLD
 
 /** Widgets that show a temperature. */
 internal fun WType.hasTemperature() = this == WType.ENGINE || this == WType.VIALS || this == WType.WEATHER
 
 /** Widgets with a heading you can rename. Folders and link folders are renamed from inside. */
 internal fun WType.hasTitle() = this == WType.BOILER || this == WType.CARGO || this == WType.BAROMETER ||
-    this == WType.MEMO || this == WType.SHELF || this == WType.PICKS || this == WType.AGENDA || this == WType.WEATHER
+    this == WType.MEMO || this == WType.SHELF || this == WType.PICKS || this == WType.AGENDA || this == WType.WEATHER ||
+    this == WType.WORLD || this == WType.CONTACTS || this == WType.LOGBOOK
 
 internal fun WType.defaultTitle(): String = when (this) {
+    WType.WORLD -> "World clock"
+    WType.CONTACTS -> "Speed dial"
+    WType.LOGBOOK -> "Logbook"
     WType.WEATHER -> "Weather"
     WType.AGENDA -> "Agenda"
     WType.BOILER -> "Boiler pressure"
@@ -207,6 +219,125 @@ fun WidgetSettingsDialog(w: WidgetItem, board: WidgetBoard, onClose: () -> Unit)
                             }
                         }
                         if (cur.tone.isNotBlank()) CogButton("Default") { change { it.copy(tone = "") } }
+                    }
+                }
+
+                if (w.type == WType.WORLD) {
+                    Text("Cities", style = MaterialTheme.typography.titleMedium, color = Steam.Parchment)
+                    Text(
+                        "Your own time is always the first line. Add up to $MAX_ZONES cities by typing part of the name, for example Tokyo or New York. " +
+                            "Cities are listed under their time-zone name, so Mumbai is Kolkata. Tap a city below to remove it.",
+                        style = MaterialTheme.typography.labelLarge, color = Steam.Steam,
+                    )
+                    cur.zones.chunked(2).forEach { rowOf ->
+                        Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                            rowOf.forEach { id ->
+                                SpeedChip("✕ " + cityOf(id), true, Modifier.weight(1f)) { change { s -> s.copy(zones = s.zones - id) } }
+                            }
+                            if (rowOf.size == 1) Spacer(Modifier.weight(1f))
+                        }
+                    }
+                    var query by remember(w.id) { mutableStateOf("") }
+                    val allZones = remember { searchableZones() }
+                    OutlinedTextField(
+                        value = query,
+                        onValueChange = { query = it.take(30) },
+                        modifier = Modifier.fillMaxWidth(),
+                        singleLine = true,
+                        placeholder = { Text("Search for a city") },
+                        colors = steamFieldColors(),
+                    )
+                    if (query.trim().length >= 2) {
+                        val found = allZones.filter { it.replace('_', ' ').contains(query.trim(), ignoreCase = true) && it !in cur.zones }.take(6)
+                        if (found.isEmpty()) {
+                            Text("No city by that name.", style = MaterialTheme.typography.labelLarge, color = Steam.Steam)
+                        }
+                        found.chunked(2).forEach { rowOf ->
+                            Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                                rowOf.forEach { id ->
+                                    SpeedChip(cityOf(id), false, Modifier.weight(1f)) {
+                                        if (board.settingsOf(w.id).zones.size < MAX_ZONES) {
+                                            change { s -> s.copy(zones = s.zones + id) }
+                                            query = ""
+                                        } else {
+                                            Toast.makeText(ctx, "That is the most cities this widget holds.", Toast.LENGTH_SHORT).show()
+                                        }
+                                    }
+                                }
+                                if (rowOf.size == 1) Spacer(Modifier.weight(1f))
+                            }
+                        }
+                    }
+                }
+
+                if (w.type == WType.CONTACTS) {
+                    val pickContact = rememberLauncherForActivityResult(ActivityResultContracts.StartActivityForResult()) { res ->
+                        val uri = res.data?.data
+                        if (res.resultCode == Activity.RESULT_OK && uri != null) {
+                            try {
+                                ctx.contentResolver.query(
+                                    uri,
+                                    arrayOf(
+                                        android.provider.ContactsContract.CommonDataKinds.Phone.DISPLAY_NAME,
+                                        android.provider.ContactsContract.CommonDataKinds.Phone.NUMBER,
+                                    ),
+                                    null, null, null,
+                                )?.use { c ->
+                                    if (c.moveToFirst()) {
+                                        val name = (c.getString(0) ?: "").replace("|", " ").trim().take(30)
+                                        val number = (c.getString(1) ?: "").trim().take(40)
+                                        if (name.isNotEmpty() && number.isNotEmpty()) {
+                                            change { s -> s.copy(dial = (s.dial + (name + "|" + number)).distinct().take(MAX_DIAL)) }
+                                        }
+                                    }
+                                }
+                            } catch (e: Exception) {
+                                Toast.makeText(ctx, "Could not read that contact.", Toast.LENGTH_SHORT).show()
+                            }
+                        }
+                    }
+                    Text("People", style = MaterialTheme.typography.titleMedium, color = Steam.Parchment)
+                    Text(
+                        "Choose up to $MAX_DIAL people. Tapping one opens the dialler with the number ready; press and hold to write a text. " +
+                            "Brassworks never sees your other contacts: Android hands over only the one you pick. The names and numbers are kept in this widget and in your backup file. Tap a name below to remove it.",
+                        style = MaterialTheme.typography.labelLarge, color = Steam.Steam,
+                    )
+                    cur.dial.mapNotNull { raw -> dialEntryOf(raw)?.let { raw to it } }.chunked(2).forEach { rowOf ->
+                        Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                            rowOf.forEach { (raw, e) ->
+                                SpeedChip("✕ " + e.name, true, Modifier.weight(1f)) { change { s -> s.copy(dial = s.dial - raw) } }
+                            }
+                            if (rowOf.size == 1) Spacer(Modifier.weight(1f))
+                        }
+                    }
+                    CogRow {
+                        if (cur.dial.size < MAX_DIAL) {
+                            CogButton("Add contact") {
+                                try {
+                                    pickContact.launch(Intent(Intent.ACTION_PICK, android.provider.ContactsContract.CommonDataKinds.Phone.CONTENT_URI))
+                                } catch (e: Exception) {
+                                    Toast.makeText(ctx, "No contacts app on this phone.", Toast.LENGTH_SHORT).show()
+                                }
+                            }
+                        }
+                    }
+                }
+
+                if (w.type == WType.LOGBOOK) {
+                    Text("Usage access", style = MaterialTheme.typography.titleMedium, color = Steam.Parchment)
+                    Text(
+                        "The Logbook adds up how long each app was in front today, using the figures Android already keeps. " +
+                            "Android asks you to switch on Usage access for Brassworks once. Nothing is stored or sent anywhere.",
+                        style = MaterialTheme.typography.labelLarge, color = Steam.Steam,
+                    )
+                    CogRow {
+                        CogButton("Usage access") {
+                            try {
+                                ctx.startActivity(Intent(android.provider.Settings.ACTION_USAGE_ACCESS_SETTINGS).addFlags(Intent.FLAG_ACTIVITY_NEW_TASK))
+                            } catch (e: Exception) {
+                                Toast.makeText(ctx, "This phone has no Usage access page.", Toast.LENGTH_SHORT).show()
+                            }
+                        }
                     }
                 }
 
