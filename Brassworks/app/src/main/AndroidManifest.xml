@@ -1,5 +1,6 @@
 <?xml version="1.0" encoding="utf-8"?>
-<manifest xmlns:android="http://schemas.android.com/apk/res/android">
+<manifest xmlns:android="http://schemas.android.com/apk/res/android"
+    xmlns:tools="http://schemas.android.com/tools">
 
     <!-- Needed to list every installed app in the archive (sideloaded APK, so this is fine) -->
     <uses-permission android:name="android.permission.QUERY_ALL_PACKAGES" />
@@ -11,6 +12,8 @@
     <uses-permission android:name="android.permission.INTERNET" />
     <!-- Only used by the Agenda widget, and only after you tap Allow. The calendar is read on the phone and goes nowhere -->
     <uses-permission android:name="android.permission.READ_CALENDAR" />
+    <!-- Only used by the Logbook widget. Android makes you switch on Usage access yourself; the figures are read on the phone and go nowhere -->
+    <uses-permission android:name="android.permission.PACKAGE_USAGE_STATS" tools:ignore="ProtectedPermissions" />
     <!-- Lets the Countdown widget ring with a notification. Asked once, the first time you start a timer or alarm -->
     <uses-permission android:name="android.permission.POST_NOTIFICATIONS" />
 
