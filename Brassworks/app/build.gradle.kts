@@ -4,6 +4,10 @@ plugins {
     id("org.jetbrains.kotlin.plugin.compose")
 }
 
+// The release keystore is supplied by GitHub Actions secrets (see build-apk.yml).
+// Without it (e.g. a local build or a fork), release builds fall back to the debug key.
+val releaseKeystore: String? = System.getenv("BRASSWORKS_KEYSTORE")
+
 android {
     namespace = "com.steampunk.brassworks"
     compileSdk = 34
@@ -12,13 +16,30 @@ android {
         applicationId = "com.steampunk.brassworks"
         minSdk = 26
         targetSdk = 34
+        // Bump BOTH before every release. versionCode must always go up,
+        // or Android refuses to install the update over the old version.
         versionCode = 1
-        versionName = "1.0"
+        versionName = "1.0.0"
     }
+
+    signingConfigs {
+        create("release") {
+            if (releaseKeystore != null) {
+                storeFile = file(releaseKeystore)
+                storePassword = System.getenv("BRASSWORKS_KEYSTORE_PASSWORD")
+                keyAlias = System.getenv("BRASSWORKS_KEY_ALIAS")
+                keyPassword = System.getenv("BRASSWORKS_KEY_PASSWORD")
+            }
+        }
+    }
+
     buildTypes {
         release {
             isMinifyEnabled = false
-            signingConfig = signingConfigs.getByName("debug") // installable without a keystore
+            signingConfig = if (releaseKeystore != null)
+                signingConfigs.getByName("release")
+            else
+                signingConfigs.getByName("debug")
         }
     }
     compileOptions {
